@@ -26,19 +26,29 @@ expected_save_game_original_value2 = 0x48C03345
 fstring_add_offset = 0x8822F0 ; FString operator+(const FString&, const wchar_t*)
 fmemory_free_offset = 0x162B070 ; FMemory::Free(void*)
 getsavegamepath_offset = 0x335D6D0 ; FString FGenericSaveGameSystem::GetSaveGamePath(const wchar_t*)
+projectsaveddir_offset = 0x16FF5C0
 
 ; allowed time between saves of the position, in milliseconds
 allow_interval = 60 * 1000  ; 1 minute
+
+; keep at most this number of backups
+max_backups = 5
 
 section '.text' code readable executable
 
 CreateDXGIFactory:
 virtual at 0
-	rb	20h	; shadow space for callees
+	rb	48h	; shadow space for callees + arguments for Sprintf
 .saved_rcx	dq	?
 .saved_rdx	dq	?
 .saved_r8	dq	?
 .saved_r9	dq	?
+.new_backup_filename	rq	2
+.old_backups	dq	?
+.old_backups_end	dq	?
+.enum_dir_handle	dq	?
+.backups_filename_pos	dq	?
+.old_backups_left	dd	?
 .func	dd	?
 .patch_failed	db	?
 .orig_dll_name	rb	104h + 14h
@@ -193,6 +203,155 @@ end virtual
 	mov	r9, rbx
 	call	[VirtualProtect]
 .skip_savegame_patch:
+if max_backups > 0
+	int3
+	mov	cl, 1
+	cmp	[fmemory_free], 0
+	jz	.backup_failed
+	cmp	[getsavegamepath], 0
+	jz	.backup_failed
+	lea	rax, [rdi - save_game_offset + projectsaveddir_offset]
+	mov	rdx, 0x000109B880F88B48
+	cmp	[rax+0Bh], rdx
+	jnz	.backup_failed
+	call	rax
+	mov	rcx, [rax]
+	mov	rdi, rbx
+@@:
+	mov	ax, [rcx]
+	test	ax, ax
+	jz	@f
+	stosw
+	add	rcx, 2
+	jmp	@b
+@@:
+virtual at 0
+.savepath	du	'SaveBackups',0
+load savepath_val1 qword from 0
+load savepath_val2 qword from 8
+load savepath_val3 qword from 10h
+end virtual
+	mov	rax, savepath_val1
+	stosq
+	mov	rax, savepath_val2
+	stosq
+	mov	rax, savepath_val3
+	stosq
+	mov	qword [rbx + .backups_filename_pos - .orig_dll_name], rdi
+	mov	rcx, rbx
+	xor	edx, edx
+	call	[CreateDirectoryW]
+	lea	rcx, [rbx + .new_backup_filename - .orig_dll_name]
+	call	[GetLocalTime]
+	movzx	rax, word [rbx + .new_backup_filename - .orig_dll_name + SYSTEMTIME.wMonth]
+	mov	qword [rbx - .orig_dll_name + 20h], rax
+	movzx	rax, word [rbx + .new_backup_filename - .orig_dll_name + SYSTEMTIME.wDay]
+	mov	qword [rbx - .orig_dll_name + 28h], rax
+	movzx	rax, word [rbx + .new_backup_filename - .orig_dll_name + SYSTEMTIME.wHour]
+	mov	qword [rbx - .orig_dll_name + 30h], rax
+	movzx	rax, word [rbx + .new_backup_filename - .orig_dll_name + SYSTEMTIME.wMinute]
+	mov	qword [rbx - .orig_dll_name + 38h], rax
+	movzx	rax, word [rbx + .new_backup_filename - .orig_dll_name + SYSTEMTIME.wSecond]
+	mov	qword [rbx - .orig_dll_name + 40h], rax
+	mov	rax, [getsavegamepath]
+	movsxd	rcx, dword [rax+35h]
+	lea	rax, [rax+39h+rcx]
+	lea	rcx, [rbx + .new_backup_filename - .orig_dll_name]
+	lea	rdx, [backup_filename_formatstring]
+	mov	r8, rbx
+	movzx	r9d, word [rbx + .new_backup_filename - .orig_dll_name + SYSTEMTIME.wYear]
+	call	rax
+	mov	word [rdi-2], '/'
+virtual at 0
+.backupmask	du	'*.sav', 0
+load backupmask_val1 qword from 0
+load backupmask_val2 dword from 8
+end virtual
+	mov	rax, backupmask_val1
+	stosq
+	mov	eax, backupmask_val2
+	stosd
+	call	[GetProcessHeap]
+	mov	rcx, rax
+	xor	edx, edx
+	mov	dword [rbx + .old_backups_left - .orig_dll_name], max_backups
+	mov	r8d, max_backups * sizeof.WIN32_FIND_DATAW
+	mov	qword [rbx + .old_backups_end - .orig_dll_name], r8
+	call	[HeapAlloc]
+	mov	cl, 1
+	test	rax, rax
+	jz	.backup_failed
+	mov	rdi, rax
+	mov	qword [rbx + .old_backups - .orig_dll_name], rax
+	add	qword [rbx + .old_backups_end - .orig_dll_name], rax
+	mov	rcx, rbx
+	mov	rdx, rax
+	call	[FindFirstFileW]
+	cmp	rax, -1
+	jz	.no_backups_to_remove
+	mov	qword [rbx + .enum_dir_handle - .orig_dll_name], rax
+.file_loop:
+	test	byte [rdi+WIN32_FIND_DATAW.dwFileAttributes], FILE_ATTRIBUTE_DIRECTORY
+	jnz	.next_file
+	add	rdi, sizeof.WIN32_FIND_DATAW
+	dec	dword [rbx + .old_backups_left - .orig_dll_name]
+	jg	.next_file
+; we got max_backups files, remove the oldest one to make the space for the new one
+	mov	rax, qword [rbx + .old_backups - .orig_dll_name]
+	mov	rdi, rax
+	mov	rcx, qword [rax + WIN32_FIND_DATAW.ftLastWriteTime]
+.find_oldest_file:
+	add	rax, sizeof.WIN32_FIND_DATAW
+	cmp	rax, qword [rbx + .old_backups_end - .orig_dll_name]
+	jz	.found_oldest_file
+	cmp	qword [rax + WIN32_FIND_DATAW.ftLastWriteTime], rcx
+	jae	.find_oldest_file
+	mov	rdi, rax
+	mov	rcx, qword [rax + WIN32_FIND_DATAW.ftLastWriteTime]
+	jmp	.find_oldest_file
+.found_oldest_file:
+	lea	rdx, [rdi + WIN32_FIND_DATAW.cFileName]
+	mov	rcx, qword [rbx + .backups_filename_pos - .orig_dll_name]
+@@:
+	mov	ax, [rdx]
+	mov	[rcx], ax
+	add	rdx, 2
+	add	rcx, 2
+	test	ax, ax
+	jnz	@b
+	mov	rcx, rbx
+	call	[DeleteFileW]
+.next_file:
+	mov	rcx, qword [rbx + .enum_dir_handle - .orig_dll_name]
+	mov	rdx, rdi
+	call	[FindNextFileW]
+	test	eax, eax
+	jnz	.file_loop
+	mov	rcx, qword [rbx + .enum_dir_handle - .orig_dll_name]
+	call	[FindClose]
+.no_backups_to_remove:
+	call	[GetProcessHeap]
+	mov	rcx, rax
+	xor	edx, edx
+	mov	r8, qword [rbx + .old_backups - .orig_dll_name]
+	call	[HeapFree]
+; cleanup completed, now actually make a backup
+	xor	ecx, ecx
+	lea	rdx, [rbx + .old_backups - .orig_dll_name] ; reuse the stack var
+	lea	r8, [str_OfflineSavegame]
+	call	[getsavegamepath]
+	mov	rcx, qword [rbx + .old_backups - .orig_dll_name]
+	mov	rdx, qword [rbx + .new_backup_filename - .orig_dll_name]
+	xor	r8d, r8d
+	call	[CopyFileW]
+	mov	rcx, qword [rbx + .old_backups - .orig_dll_name]
+	call	[fmemory_free]
+	mov	rcx, qword [rbx + .new_backup_filename - .orig_dll_name]
+	call	[fmemory_free]
+	mov	cl, 0
+.backup_failed:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
+end if
 	cmp	[rbx + .patch_failed - .orig_dll_name], 0
 	jz	@f
 	xor	ecx, ecx
@@ -328,8 +487,6 @@ save_game_patched:
 	ret
 .end:
 
-str_tmp	du	'.tmp',0
-
 section '.rdata' data readable
 data import
 library kernel32, 'KERNEL32.DLL', user32, 'USER32.DLL'
@@ -394,6 +551,9 @@ patch_failed_text:
 patch_failed_caption:
 	db	'Patch error',0
 
+str_tmp	du	'.tmp',0
+str_OfflineSavegame	du	'OfflineSavegame',0
+backup_filename_formatstring	du	'%s/OfflineSavegame_%04d-%02d-%02d_%02d%02d%02d.sav',0
 
 section '.data' data readable writable
 original	rq	3
