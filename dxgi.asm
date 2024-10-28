@@ -204,7 +204,6 @@ end virtual
 	call	[VirtualProtect]
 .skip_savegame_patch:
 if max_backups > 0
-	int3
 	mov	cl, 1
 	cmp	[fmemory_free], 0
 	jz	.backup_failed
