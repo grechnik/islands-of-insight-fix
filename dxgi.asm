@@ -28,11 +28,11 @@ fmemory_free_offset = 0x162B070 ; FMemory::Free(void*)
 getsavegamepath_offset = 0x335D6D0 ; FString FGenericSaveGameSystem::GetSaveGamePath(const wchar_t*)
 projectsaveddir_offset = 0x16FF5C0
 
+ChargeJumpRechargeDelay_setter_offset = 0x1326374
+ChargeJumpRechargeDelay_setter_expected = 0x0000000AC086C749
+
 ; allowed time between saves of the position, in milliseconds
 allow_interval = 60 * 1000  ; 1 minute
-
-; keep at most this number of backups
-max_backups = 5
 
 section '.text' code readable executable
 
@@ -44,6 +44,8 @@ virtual at 0
 .saved_r8	dq	?
 .saved_r9	dq	?
 .func	dd	?
+.tmp2	dd	?
+.tmp	dd	?
 .patch_failed	db	?
 	align 2
 .orig_dll_name:
@@ -75,6 +77,27 @@ end virtual
 	mov	[rbx + .saved_rdx - .orig_dll_name], rdx
 	mov	[rbx + .saved_r8 - .orig_dll_name], r8
 	mov	[rbx + .saved_r9 - .orig_dll_name], r9
+; get the path to the ini file
+	xor	ecx, ecx
+	mov	rdx, rbx
+	mov	r8d, 104h
+	call	[GetModuleFileNameW]
+	lea	rdi, [rbx + rax*2]
+@@:
+	cmp	rdi, rbx
+	jz	@f
+	cmp	word [rdi-2], '/'
+	jz	@f
+	cmp	word [rdi-2], '\'
+	jz	@f
+	sub	rdi, 2
+	jmp	@b
+@@:
+	mov	rax, 0x0069006700780064 ; dxgi
+	stosq
+	mov	rax, 0x0069006E0069002E	; .ini
+	stosq
+	and	word [rdi], 0
 ; patch function that saves player's location/rotation
 	xor	ecx, ecx
 	mov	[rbx + .patch_failed - .orig_dll_name], cl
@@ -128,7 +151,7 @@ end virtual
 	mov	rcx, rdi
 	mov	edx, 12
 	lea	r8d, [rdx-12+PAGE_READWRITE]
-	mov	r9, rbx
+	lea	r9, [rbx + .tmp - .orig_dll_name]
 	call	[VirtualProtect]
 	mov	word [rdi], 0xB848  ; mov rax,imm64
 	lea	rax, [patched]
@@ -136,15 +159,22 @@ end virtual
 	mov	word [rdi+10], 0xE0FF  ; jmp rax
 	mov	rcx, rdi
 	mov	edx, 12
-	mov	r9, rbx
-	mov	r8d, [rbx]
+	lea	r9, [rbx + .tmp - .orig_dll_name]
+	mov	r8d, [r9]
 	call	[VirtualProtect]
 ; patch IsSolved/IsSolvedBy so that solved puzzles stay solved
 	add	rdi, is_solved_offset - patched_function
+	lea	rcx, [strGameplay]
+	lea	rdx, [strSolvedStaySolved]
+	xor	r8d, r8d
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	test	eax, eax
+	jz	.skip_solved_patch
 	mov	rcx, rdi
 	mov	edx, is_solved_by_offset - is_solved_offset + 1
 	mov	r8d, PAGE_READWRITE
-	mov	r9, rbx
+	lea	r9, [rbx + .tmp - .orig_dll_name]
 	call	[VirtualProtect]
 ; safety check: expect 7E to patch with EB
 	mov	cl, 1
@@ -164,14 +194,33 @@ end virtual
 	or	[rbx + .patch_failed - .orig_dll_name], cl
 	mov	rcx, rdi
 	mov	edx, is_solved_by_offset - is_solved_offset + 1
-	mov	r8d, [rbx]
-	mov	r9, rbx
+	lea	r9, [rbx + .tmp - .orig_dll_name]
+	mov	r8d, [r9]
 	call	[VirtualProtect]
+.skip_solved_patch:
 ; patch the caller of UGameplayStatics::SaveGameToSlot for save-to-temporary/move-temporary-to-main
 ; this assumes the availability of fstring_add, fmemory_free, getsavegamepath
 	add	rdi, save_game_offset - is_solved_offset
 	cmp	[rbx + .patch_failed - .orig_dll_name], 0
 	jnz	.skip_savegame_patch
+	lea	rcx, [strSaves]
+	lea	rdx, [strViaTemporaryFile]
+	xor	r8d, r8d
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	mov	[use_temporary_file], al
+	lea	rcx, [strSaves]
+	lea	rdx, [strMaxBackups]
+	xor	r8d, r8d
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	mov	[max_backups], eax
+	test	eax, eax
+	jg	@f
+	inc	[backup_made]
+	cmp	[use_temporary_file], 0
+	jz	.skip_savegame_patch
+@@:
 	lea	rax, [rdi - save_game_offset + projectsaveddir_offset]
 	mov	rdx, 0x000109B880F88B48
 	cmp	[rax+0Bh], rdx
@@ -182,7 +231,7 @@ end virtual
 	mov	rcx, rdi
 	mov	edx, 12
 	lea	r8d, [rdx-12+PAGE_READWRITE]
-	mov	r9, rbx
+	lea	r9, [rbx + .tmp - .orig_dll_name]
 	call	[VirtualProtect]
 	mov	rax, expected_save_game_original_value1
 	mov	cl, 1
@@ -202,10 +251,41 @@ end virtual
 	or	[rbx + .patch_failed - .orig_dll_name], cl
 	mov	rcx, rdi
 	mov	edx, 12
-	mov	r8d, [rbx]
-	mov	r9, rbx
+	lea	r9, [rbx + .tmp - .orig_dll_name]
+	mov	r8d, [r9]
 	call	[VirtualProtect]
 .skip_savegame_patch:
+; patch ChargeJumpRechargeDelay
+	add	rdi, ChargeJumpRechargeDelay_setter_offset - save_game_offset
+	lea	rcx, [strGameplay]
+	lea	rdx, [strChargeJumpRechargeDelay]
+	xor	r8d, r8d
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	test	eax, eax
+	jz	.skip_recharge_patch
+	mov	[rbx + .tmp2 - .orig_dll_name], eax
+	mov	cl, 1
+	mov	rdx, ChargeJumpRechargeDelay_setter_expected
+	cmp	qword [rdi], rdx
+	jnz	.done_recharge_patch
+	mov	rcx, rdi
+	mov	edx, 12
+	lea	r8d, [rdx-12+PAGE_READWRITE]
+	lea	r9, [rbx + .tmp - .orig_dll_name]
+	call	[VirtualProtect]
+	movss	xmm0, [rbx + .tmp2 - .orig_dll_name]
+	cvtdq2ps xmm0, xmm0
+	movss	[rdi+7], xmm0
+	mov	rcx, rdi
+	mov	edx, 12
+	lea	r9, [rbx + .tmp - .orig_dll_name]
+	mov	r8d, [r9]
+	call	[VirtualProtect]
+	mov	cl, 0
+.done_recharge_patch:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
+.skip_recharge_patch:
 	cmp	[rbx + .patch_failed - .orig_dll_name], 0
 	jz	@f
 	xor	ecx, ecx
@@ -302,9 +382,17 @@ save_game_patched:
 	jz	@f
 	call	make_backup
 @@:
-; "OfflineSavegame" -> "OfflineSavegame.tmp"
 	lea	rcx, [rsp+30h]
 	mov	rax, [rcx-10h]
+	cmp	[use_temporary_file], 0
+	jnz	@f
+	mov	rcx, [rax+40h]
+	lea	rdx, [rax+30h]
+	xor	r8d, r8d
+	add	rsp, 28h
+	jmp	[savegametoslot]
+@@:
+; "OfflineSavegame" -> "OfflineSavegame.tmp"
 	lea	rdx, [rax+30h]
 	lea	r8, [str_tmp]
 	call	[fstring_add]
@@ -373,7 +461,6 @@ end virtual
 .prolog_offs2 = $ - make_backup
 .prolog_size = $ - make_backup
 	lea	rbx, [rsp + .frame_offset]
-if max_backups > 0
 	lea	rcx, [rbx - .frame_offset + .savebackups_dir]
 	lea	r8, [savebackups_path]
 	call	[fstring_add]
@@ -411,8 +498,9 @@ if max_backups > 0
 	call	[GetProcessHeap]
 	mov	rcx, rax
 	xor	edx, edx
-	mov	[rbx - .frame_offset + .old_backups_left], max_backups
-	mov	r8d, max_backups * sizeof.WIN32_FIND_DATAW
+	mov	eax, [max_backups]
+	mov	[rbx - .frame_offset + .old_backups_left], eax
+	imul	r8d, eax, sizeof.WIN32_FIND_DATAW
 	mov	[rbx - .frame_offset + .old_backups_end], r8
 	call	[HeapAlloc]
 	test	rax, rax
@@ -486,7 +574,6 @@ if max_backups > 0
 	call	[fmemory_free]
 	mov	rcx, [rbx - .frame_offset + .savebackups_dir]
 	call	[fmemory_free]
-end if
 	add	rsp, .stack_size
 	pop	rbx
 	ret
@@ -566,11 +653,20 @@ patch_failed_text:
 patch_failed_caption:
 	db	'Patch error',0
 
+align 2
 str_tmp	du	'.tmp',0
 str_OfflineSavegame	du	'OfflineSavegame',0
 backup_filename_formatstring	du	'%sOfflineSavegame_%04d-%02d-%02d_%02d%02d%02d.sav',0
 savebackups_path	du	'SaveBackups/',0
 savebackups_mask	du	'*.sav',0
+
+; ini file sections and keys
+strSaves	du	'Saves', 0
+strViaTemporaryFile	du	'ViaTemporaryFile', 0
+strMaxBackups	du	'MaxBackups', 0
+strGameplay	du	'Gameplay', 0
+strSolvedStaySolved	du	'SolvedStaySolved', 0
+strChargeJumpRechargeDelay	du	'ChargeJumpRechargeDelay', 0
 
 section '.data' data readable writable
 original	rq	3
@@ -581,4 +677,6 @@ fmemory_free	dq	?
 getsavegamepath	dq	?
 projectsaveddir	dq	?
 last_tick_count	dd	?
+max_backups	dd	?
 backup_made	db	?
+use_temporary_file db	?
