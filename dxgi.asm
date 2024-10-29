@@ -38,20 +38,16 @@ section '.text' code readable executable
 
 CreateDXGIFactory:
 virtual at 0
-	rb	48h	; shadow space for callees + arguments for Sprintf
+	rb	20h	; shadow space for callees
 .saved_rcx	dq	?
 .saved_rdx	dq	?
 .saved_r8	dq	?
 .saved_r9	dq	?
-.new_backup_filename	rq	2
-.old_backups	dq	?
-.old_backups_end	dq	?
-.enum_dir_handle	dq	?
-.backups_filename_pos	dq	?
-.old_backups_left	dd	?
 .func	dd	?
 .patch_failed	db	?
-.orig_dll_name	rb	104h + 14h
+	align 2
+.orig_dll_name:
+	rw	104h + 14h
 	align 16
 .stack_size = $
 end virtual
@@ -74,14 +70,14 @@ end virtual
 	movzx	eax, al
 	cmp	qword [original], 0
 	jnz	.justdoit
-	mov	dword [rbx + .func - .orig_dll_name], eax
-	mov	qword [rbx + .saved_rcx - .orig_dll_name], rcx
-	mov	qword [rbx + .saved_rdx - .orig_dll_name], rdx
-	mov	qword [rbx + .saved_r8 - .orig_dll_name], r8
-	mov	qword [rbx + .saved_r9 - .orig_dll_name], r9
+	mov	[rbx + .func - .orig_dll_name], eax
+	mov	[rbx + .saved_rcx - .orig_dll_name], rcx
+	mov	[rbx + .saved_rdx - .orig_dll_name], rdx
+	mov	[rbx + .saved_r8 - .orig_dll_name], r8
+	mov	[rbx + .saved_r9 - .orig_dll_name], r9
 ; patch function that saves player's location/rotation
 	xor	ecx, ecx
-	mov	byte [rbx + .patch_failed - .orig_dll_name], cl
+	mov	[rbx + .patch_failed - .orig_dll_name], cl
 	call	[GetModuleHandleW]
 	mov	ecx, [rax+3Ch]
 	cmp	dword [rax+rcx+50h], expected_image_size
@@ -91,7 +87,7 @@ end virtual
 	cmp	[rcx+25h], rdx
 	jz	@f
 	xor	ecx, ecx
-	mov	byte [rbx + .patch_failed - .orig_dll_name], 1
+	mov	[rbx + .patch_failed - .orig_dll_name], 1
 @@:
 	mov	[fstring_add], rcx
 	lea	rcx, [rax+fmemory_free_offset]
@@ -99,7 +95,7 @@ end virtual
 	cmp	[rcx], rdx
 	jz	@f
 	xor	ecx, ecx
-	mov	byte [rbx + .patch_failed - .orig_dll_name], 1
+	mov	[rbx + .patch_failed - .orig_dll_name], 1
 @@:
 	mov	[fmemory_free], rcx
 	lea	rcx, [rax+getsavegamepath_offset]
@@ -111,7 +107,7 @@ end virtual
 @@:
 	jz	@f
 	xor	ecx, ecx
-	mov	byte [rbx + .patch_failed - .orig_dll_name], 1
+	mov	[rbx + .patch_failed - .orig_dll_name], 1
 @@:
 	mov	[getsavegamepath], rcx
 	lea	rdi, [rax+patched_function]
@@ -176,6 +172,13 @@ end virtual
 	add	rdi, save_game_offset - is_solved_offset
 	cmp	[rbx + .patch_failed - .orig_dll_name], 0
 	jnz	.skip_savegame_patch
+	lea	rax, [rdi - save_game_offset + projectsaveddir_offset]
+	mov	rdx, 0x000109B880F88B48
+	cmp	[rax+0Bh], rdx
+	jnz	@f
+	call	rax
+	mov	[projectsaveddir], rax
+@@:
 	mov	rcx, rdi
 	mov	edx, 12
 	lea	r8d, [rdx-12+PAGE_READWRITE]
@@ -203,154 +206,6 @@ end virtual
 	mov	r9, rbx
 	call	[VirtualProtect]
 .skip_savegame_patch:
-if max_backups > 0
-	mov	cl, 1
-	cmp	[fmemory_free], 0
-	jz	.backup_failed
-	cmp	[getsavegamepath], 0
-	jz	.backup_failed
-	lea	rax, [rdi - save_game_offset + projectsaveddir_offset]
-	mov	rdx, 0x000109B880F88B48
-	cmp	[rax+0Bh], rdx
-	jnz	.backup_failed
-	call	rax
-	mov	rcx, [rax]
-	mov	rdi, rbx
-@@:
-	mov	ax, [rcx]
-	test	ax, ax
-	jz	@f
-	stosw
-	add	rcx, 2
-	jmp	@b
-@@:
-virtual at 0
-.savepath	du	'SaveBackups',0
-load savepath_val1 qword from 0
-load savepath_val2 qword from 8
-load savepath_val3 qword from 10h
-end virtual
-	mov	rax, savepath_val1
-	stosq
-	mov	rax, savepath_val2
-	stosq
-	mov	rax, savepath_val3
-	stosq
-	mov	qword [rbx + .backups_filename_pos - .orig_dll_name], rdi
-	mov	rcx, rbx
-	xor	edx, edx
-	call	[CreateDirectoryW]
-	lea	rcx, [rbx + .new_backup_filename - .orig_dll_name]
-	call	[GetLocalTime]
-	movzx	rax, word [rbx + .new_backup_filename - .orig_dll_name + SYSTEMTIME.wMonth]
-	mov	qword [rbx - .orig_dll_name + 20h], rax
-	movzx	rax, word [rbx + .new_backup_filename - .orig_dll_name + SYSTEMTIME.wDay]
-	mov	qword [rbx - .orig_dll_name + 28h], rax
-	movzx	rax, word [rbx + .new_backup_filename - .orig_dll_name + SYSTEMTIME.wHour]
-	mov	qword [rbx - .orig_dll_name + 30h], rax
-	movzx	rax, word [rbx + .new_backup_filename - .orig_dll_name + SYSTEMTIME.wMinute]
-	mov	qword [rbx - .orig_dll_name + 38h], rax
-	movzx	rax, word [rbx + .new_backup_filename - .orig_dll_name + SYSTEMTIME.wSecond]
-	mov	qword [rbx - .orig_dll_name + 40h], rax
-	mov	rax, [getsavegamepath]
-	movsxd	rcx, dword [rax+35h]
-	lea	rax, [rax+39h+rcx]
-	lea	rcx, [rbx + .new_backup_filename - .orig_dll_name]
-	lea	rdx, [backup_filename_formatstring]
-	mov	r8, rbx
-	movzx	r9d, word [rbx + .new_backup_filename - .orig_dll_name + SYSTEMTIME.wYear]
-	call	rax
-	mov	word [rdi-2], '/'
-virtual at 0
-.backupmask	du	'*.sav', 0
-load backupmask_val1 qword from 0
-load backupmask_val2 dword from 8
-end virtual
-	mov	rax, backupmask_val1
-	stosq
-	mov	eax, backupmask_val2
-	stosd
-	call	[GetProcessHeap]
-	mov	rcx, rax
-	xor	edx, edx
-	mov	dword [rbx + .old_backups_left - .orig_dll_name], max_backups
-	mov	r8d, max_backups * sizeof.WIN32_FIND_DATAW
-	mov	qword [rbx + .old_backups_end - .orig_dll_name], r8
-	call	[HeapAlloc]
-	mov	cl, 1
-	test	rax, rax
-	jz	.backup_failed
-	mov	rdi, rax
-	mov	qword [rbx + .old_backups - .orig_dll_name], rax
-	add	qword [rbx + .old_backups_end - .orig_dll_name], rax
-	mov	rcx, rbx
-	mov	rdx, rax
-	call	[FindFirstFileW]
-	cmp	rax, -1
-	jz	.no_backups_to_remove
-	mov	qword [rbx + .enum_dir_handle - .orig_dll_name], rax
-.file_loop:
-	test	byte [rdi+WIN32_FIND_DATAW.dwFileAttributes], FILE_ATTRIBUTE_DIRECTORY
-	jnz	.next_file
-	add	rdi, sizeof.WIN32_FIND_DATAW
-	dec	dword [rbx + .old_backups_left - .orig_dll_name]
-	jg	.next_file
-; we got max_backups files, remove the oldest one to make the space for the new one
-	mov	rax, qword [rbx + .old_backups - .orig_dll_name]
-	mov	rdi, rax
-	mov	rcx, qword [rax + WIN32_FIND_DATAW.ftLastWriteTime]
-.find_oldest_file:
-	add	rax, sizeof.WIN32_FIND_DATAW
-	cmp	rax, qword [rbx + .old_backups_end - .orig_dll_name]
-	jz	.found_oldest_file
-	cmp	qword [rax + WIN32_FIND_DATAW.ftLastWriteTime], rcx
-	jae	.find_oldest_file
-	mov	rdi, rax
-	mov	rcx, qword [rax + WIN32_FIND_DATAW.ftLastWriteTime]
-	jmp	.find_oldest_file
-.found_oldest_file:
-	lea	rdx, [rdi + WIN32_FIND_DATAW.cFileName]
-	mov	rcx, qword [rbx + .backups_filename_pos - .orig_dll_name]
-@@:
-	mov	ax, [rdx]
-	mov	[rcx], ax
-	add	rdx, 2
-	add	rcx, 2
-	test	ax, ax
-	jnz	@b
-	mov	rcx, rbx
-	call	[DeleteFileW]
-.next_file:
-	mov	rcx, qword [rbx + .enum_dir_handle - .orig_dll_name]
-	mov	rdx, rdi
-	call	[FindNextFileW]
-	test	eax, eax
-	jnz	.file_loop
-	mov	rcx, qword [rbx + .enum_dir_handle - .orig_dll_name]
-	call	[FindClose]
-.no_backups_to_remove:
-	call	[GetProcessHeap]
-	mov	rcx, rax
-	xor	edx, edx
-	mov	r8, qword [rbx + .old_backups - .orig_dll_name]
-	call	[HeapFree]
-; cleanup completed, now actually make a backup
-	xor	ecx, ecx
-	lea	rdx, [rbx + .old_backups - .orig_dll_name] ; reuse the stack var
-	lea	r8, [str_OfflineSavegame]
-	call	[getsavegamepath]
-	mov	rcx, qword [rbx + .old_backups - .orig_dll_name]
-	mov	rdx, qword [rbx + .new_backup_filename - .orig_dll_name]
-	xor	r8d, r8d
-	call	[CopyFileW]
-	mov	rcx, qword [rbx + .old_backups - .orig_dll_name]
-	call	[fmemory_free]
-	mov	rcx, qword [rbx + .new_backup_filename - .orig_dll_name]
-	call	[fmemory_free]
-	mov	cl, 0
-.backup_failed:
-	or	[rbx + .patch_failed - .orig_dll_name], cl
-end if
 	cmp	[rbx + .patch_failed - .orig_dll_name], 0
 	jz	@f
 	xor	ecx, ecx
@@ -394,11 +249,11 @@ end if
 	call	[GetProcAddress]
 	stosq
 	mov	rbx, rsp
-	mov	eax, dword [rbx + .func]
-	mov	rcx, qword [rbx + .saved_rcx]
-	mov	rdx, qword [rbx + .saved_rdx]
-	mov	r8, qword [rbx + .saved_r8]
-	mov	r9, qword [rbx + .saved_r9]
+	mov	eax, [rbx + .func]
+	mov	rcx, [rbx + .saved_rcx]
+	mov	rdx, [rbx + .saved_rdx]
+	mov	r8, [rbx + .saved_r8]
+	mov	r9, [rbx + .saved_r9]
 .justdoit:
 	lea	r10, [original]
 	add	rsp, .stack_size + 8
@@ -439,8 +294,17 @@ patched:
 
 save_game_patched:
 	mov	[rsp+20h], rax ; save useful data
+	cmp	[backup_made], 0
+	jnz	@f
+	inc	[backup_made]
+	mov	rdx, [projectsaveddir]
+	test	rdx, rdx
+	jz	@f
+	call	make_backup
+@@:
 ; "OfflineSavegame" -> "OfflineSavegame.tmp"
 	lea	rcx, [rsp+30h]
+	mov	rax, [rcx-10h]
 	lea	rdx, [rax+30h]
 	lea	r8, [str_tmp]
 	call	[fstring_add]
@@ -486,6 +350,148 @@ save_game_patched:
 	ret
 .end:
 
+make_backup:
+virtual at 0
+	rb	48h	; shadow space for callees + arguments for Sprintf
+.frame_offset:
+.savebackups_dir	rq	2
+.tmp_filename		rq	2
+.new_backup_filename	rq	2
+.old_backups_left	dd	?
+	align 16
+.stack_size = $
+	dq	?	; saved rbx
+	dq	?	; return address
+; use shadow space of the caller
+.old_backups	dq	?
+.old_backups_end	dq	?
+.enum_dir_handle	dq	?
+end virtual
+	push	rbx
+.prolog_offs1 = $ - make_backup
+	add	rsp, -.stack_size
+.prolog_offs2 = $ - make_backup
+.prolog_size = $ - make_backup
+	lea	rbx, [rsp + .frame_offset]
+if max_backups > 0
+	lea	rcx, [rbx - .frame_offset + .savebackups_dir]
+	lea	r8, [savebackups_path]
+	call	[fstring_add]
+	mov	rcx, [rbx - .frame_offset + .savebackups_dir]
+	mov	eax, dword [rbx - .frame_offset + .savebackups_dir + 8]
+	mov	byte [rcx + rax*2 - 4], 0 ; '/' -> 0
+	xor	edx, edx
+	call	[CreateDirectoryW]
+	lea	rcx, [rbx - .frame_offset + .new_backup_filename]
+	call	[GetLocalTime]
+	movzx	eax, word [rbx - .frame_offset + .new_backup_filename + SYSTEMTIME.wMonth]
+	mov	qword [rbx - .frame_offset + 20h], rax
+	movzx	eax, word [rbx - .frame_offset + .new_backup_filename + SYSTEMTIME.wDay]
+	mov	qword [rbx - .frame_offset + 28h], rax
+	movzx	eax, word [rbx - .frame_offset + .new_backup_filename + SYSTEMTIME.wHour]
+	mov	qword [rbx - .frame_offset + 30h], rax
+	movzx	eax, word [rbx - .frame_offset + .new_backup_filename + SYSTEMTIME.wMinute]
+	mov	qword [rbx - .frame_offset + 38h], rax
+	movzx	eax, word [rbx - .frame_offset + .new_backup_filename + SYSTEMTIME.wSecond]
+	mov	qword [rbx - .frame_offset + 40h], rax
+	mov	r8, [rbx - .frame_offset + .savebackups_dir]
+	mov	eax, dword [rbx - .frame_offset + .savebackups_dir + 8]
+	mov	byte [r8 + rax*2 - 4], '/'
+	mov	rax, [getsavegamepath]
+	movsxd	rcx, dword [rax+35h]
+	lea	rax, [rax+39h+rcx]
+	lea	rcx, [rbx - .frame_offset + .new_backup_filename]
+	lea	rdx, [backup_filename_formatstring]
+	movzx	r9d, word [rbx - .frame_offset + .new_backup_filename + SYSTEMTIME.wYear]
+	call	rax
+	lea	rcx, [rbx - .frame_offset + .tmp_filename]
+	lea	rdx, [rbx - .frame_offset + .savebackups_dir]
+	lea	r8, [savebackups_mask]
+	call	[fstring_add]
+	call	[GetProcessHeap]
+	mov	rcx, rax
+	xor	edx, edx
+	mov	[rbx - .frame_offset + .old_backups_left], max_backups
+	mov	r8d, max_backups * sizeof.WIN32_FIND_DATAW
+	mov	[rbx - .frame_offset + .old_backups_end], r8
+	call	[HeapAlloc]
+	test	rax, rax
+	jz	.cleanup_failed
+	mov	rdi, rax
+	mov	[rbx - .frame_offset + .old_backups], rax
+	add	[rbx - .frame_offset + .old_backups_end], rax
+	mov	rcx, [rbx - .frame_offset + .tmp_filename]
+	mov	rdx, rax
+	call	[FindFirstFileW]
+	cmp	rax, -1
+	jz	.no_backups_to_remove
+	mov	[rbx - .frame_offset + .enum_dir_handle], rax
+.file_loop:
+	test	byte [rdi+WIN32_FIND_DATAW.dwFileAttributes], FILE_ATTRIBUTE_DIRECTORY
+	jnz	.next_file
+	add	rdi, sizeof.WIN32_FIND_DATAW
+	dec	[rbx - .frame_offset + .old_backups_left]
+	jg	.next_file
+; we got max_backups files, remove the oldest one to make the space for the new one
+	mov	rax, [rbx - .frame_offset + .old_backups]
+	mov	rdi, rax
+	mov	rcx, qword [rax + WIN32_FIND_DATAW.ftLastWriteTime]
+.find_oldest_file:
+	add	rax, sizeof.WIN32_FIND_DATAW
+	cmp	rax, [rbx - .frame_offset + .old_backups_end]
+	jz	.found_oldest_file
+	cmp	qword [rax + WIN32_FIND_DATAW.ftLastWriteTime], rcx
+	jae	.find_oldest_file
+	mov	rdi, rax
+	mov	rcx, qword [rax + WIN32_FIND_DATAW.ftLastWriteTime]
+	jmp	.find_oldest_file
+.found_oldest_file:
+	mov	rcx, [rbx - .frame_offset + .tmp_filename]
+	call	[fmemory_free]
+	lea	rcx, [rbx - .frame_offset + .tmp_filename]
+	lea	rdx, [rbx - .frame_offset + .savebackups_dir]
+	lea	r8, [rdi + WIN32_FIND_DATAW.cFileName]
+	call	[fstring_add]
+	mov	rcx, [rbx - .frame_offset + .tmp_filename]
+	call	[DeleteFileW]
+.next_file:
+	mov	rcx, [rbx - .frame_offset + .enum_dir_handle]
+	mov	rdx, rdi
+	call	[FindNextFileW]
+	test	eax, eax
+	jnz	.file_loop
+	mov	rcx, [rbx - .frame_offset + .enum_dir_handle]
+	call	[FindClose]
+.no_backups_to_remove:
+	mov	rcx, [rbx - .frame_offset + .tmp_filename]
+	call	[fmemory_free]
+	call	[GetProcessHeap]
+	mov	rcx, rax
+	xor	edx, edx
+	mov	r8, [rbx - .frame_offset + .old_backups]
+	call	[HeapFree]
+.cleanup_failed:
+; cleanup completed, now actually make a backup
+	xor	ecx, ecx
+	lea	rdx, [rbx - .frame_offset + .old_backups] ; reuse the stack var
+	lea	r8, [str_OfflineSavegame]
+	call	[getsavegamepath]
+	mov	rcx, [rbx - .frame_offset + .old_backups]
+	mov	rdx, [rbx - .frame_offset + .new_backup_filename]
+	xor	r8d, r8d
+	call	[CopyFileW]
+	mov	rcx, [rbx - .frame_offset + .old_backups]
+	call	[fmemory_free]
+	mov	rcx, [rbx - .frame_offset + .new_backup_filename]
+	call	[fmemory_free]
+	mov	rcx, [rbx - .frame_offset + .savebackups_dir]
+	call	[fmemory_free]
+end if
+	add	rsp, .stack_size
+	pop	rbx
+	ret
+.end:
+
 section '.rdata' data readable
 data import
 library kernel32, 'KERNEL32.DLL', user32, 'USER32.DLL'
@@ -510,6 +516,7 @@ align 4
 data 3  ; IMAGE_DIRECTORY_ENTRY_EXCEPTION
 	dd	rva CreateDXGIFactory, rva CreateDXGIFactory.end, rva CreateDXGIFactory_unwind
 	dd	rva save_game_patched, rva save_game_patched.end, rva save_game_patched_unwind
+	dd	rva make_backup, rva make_backup.end, rva make_backup_unwind
 end data
 
 CreateDXGIFactory_unwind:
@@ -527,6 +534,15 @@ save_game_patched_unwind:
 	db	1, 0, save_game_patched_unwind.size / 2, 0
 .start:
 	db	0, 2 + ((28h - 8) / 8) * 10h ; UWOP_ALLOC_SMALL for 28h bytes
+.size = $ - .start
+if .size mod 4
+	dw	0
+end if
+make_backup_unwind:
+	db	1, make_backup.prolog_size, make_backup_unwind.size / 2, 0
+.start:
+	db	make_backup.prolog_offs2, 2 + ((make_backup.stack_size - 8) / 8) * 10h
+	db	make_backup.prolog_offs1, 30h ; UWOP_PUSH_NONVOL=0, rbx->3
 .size = $ - .start
 if .size mod 4
 	dw	0
@@ -552,7 +568,9 @@ patch_failed_caption:
 
 str_tmp	du	'.tmp',0
 str_OfflineSavegame	du	'OfflineSavegame',0
-backup_filename_formatstring	du	'%s/OfflineSavegame_%04d-%02d-%02d_%02d%02d%02d.sav',0
+backup_filename_formatstring	du	'%sOfflineSavegame_%04d-%02d-%02d_%02d%02d%02d.sav',0
+savebackups_path	du	'SaveBackups/',0
+savebackups_mask	du	'*.sav',0
 
 section '.data' data readable writable
 original	rq	3
@@ -561,4 +579,6 @@ savegametoslot	dq	?
 fstring_add	dq	?
 fmemory_free	dq	?
 getsavegamepath	dq	?
+projectsaveddir	dq	?
 last_tick_count	dd	?
+backup_made	db	?
