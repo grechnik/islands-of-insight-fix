@@ -4,14 +4,6 @@ include 'win64a.inc'
 ; safety checks:
 ; * we're going to read/write from fixed addresses, ImageSize of the executable should cover them
 expected_image_size = 0x6110000
-; * we're going to patch a concrete function, verify the bytes we'll rewrite
-patched_function = 0x135F2F0
-expected_original_value1 = 0x4154415756535540
-expected_original_value2 = 0x48574156
-; * expected_original_value is a not-so-unique function prolog;
-;   to make sure we're not going to patch a random function,
-;   check that it references the string "PlayerLoc" at the concrete location
-safety_check_PlayerLoc_addr = 0x135F4A0
 
 ; there are two versions of IsSolved, let's call them IsSolved and IsSolvedBy;
 ; the second one additionally takes a player identifier.
@@ -133,37 +125,8 @@ end virtual
 	mov	[rbx + .patch_failed - .orig_dll_name], 1
 @@:
 	mov	[getsavegamepath], rcx
-	lea	rdi, [rax+patched_function]
-	mov	rcx, expected_original_value1
-	cmp	qword [rdi], rcx
-	jnz	.nag
-	cmp	dword [rdi+8], expected_original_value2
-	jnz	.nag
-	mov	ecx, [rdi+safety_check_PlayerLoc_addr-patched_function]
-	add	ecx, safety_check_PlayerLoc_addr + 4
-	cmp	ecx, expected_image_size - 8
-	jae	.nag
-	mov	rdx, 'PlayerLo'
-	cmp	[rax+rcx], rdx
-	jnz	.nag
-	lea	rax, [rdi+14]
-	mov	[continue_after_patch], rax
-	mov	rcx, rdi
-	mov	edx, 12
-	lea	r8d, [rdx-12+PAGE_READWRITE]
-	lea	r9, [rbx + .tmp - .orig_dll_name]
-	call	[VirtualProtect]
-	mov	word [rdi], 0xB848  ; mov rax,imm64
-	lea	rax, [patched]
-	mov	[rdi+2], rax
-	mov	word [rdi+10], 0xE0FF  ; jmp rax
-	mov	rcx, rdi
-	mov	edx, 12
-	lea	r9, [rbx + .tmp - .orig_dll_name]
-	mov	r8d, [r9]
-	call	[VirtualProtect]
+	lea	rdi, [rax+is_solved_offset]
 ; patch IsSolved/IsSolvedBy so that solved puzzles stay solved
-	add	rdi, is_solved_offset - patched_function
 	lea	rcx, [strGameplay]
 	lea	rdx, [strSolvedStaySolved]
 	xor	r8d, r8d
@@ -287,18 +250,11 @@ end virtual
 	or	[rbx + .patch_failed - .orig_dll_name], cl
 .skip_recharge_patch:
 	cmp	[rbx + .patch_failed - .orig_dll_name], 0
-	jz	@f
+	jz	.done
+.nag:
 	xor	ecx, ecx
 	lea	rdx, [patch_failed_text]
 	lea	r8, [patch_failed_caption]
-	lea	r9, [rcx+MB_OK+MB_ICONSTOP]
-	call	[MessageBoxA]
-@@:
-	jmp	.done
-.nag:
-	xor	ecx, ecx
-	lea	rdx, [nag_text]
-	lea	r8, [nag_caption]
 	lea	r9, [rcx+MB_OK+MB_ICONSTOP]
 	call	[MessageBoxA]
 .done:
@@ -346,31 +302,6 @@ load a byte from @b
 assert a = 0x41
 store byte a+8 at @b
 .end:
-
-; this one totally ignores requirements for unwinding
-; because MS frowns about patching anyway
-; stack overflow won't be handled gracefully, not a big deal
-patched:
-	push	rcx	; stack alignment & save/restore the only function argument
-	sub	rsp, 20h
-	call	[GetTickCount]
-	add	rsp, 20h
-	pop	rcx
-	sub	eax, [last_tick_count]
-	cmp	eax, allow_interval
-	jae	.allow
-	ret
-.allow:
-	add	[last_tick_count], eax
-	push	rbp
-	push	rbx
-	push	rsi
-	push	rdi
-	push	r12
-	push	r14
-	push	r15
-	mov	rbp, rsp
-	jmp	[continue_after_patch]
 
 save_game_patched:
 	mov	[rsp+20h], rax ; save useful data
@@ -441,13 +372,16 @@ save_game_patched:
 make_backup:
 virtual at 0
 	rb	48h	; shadow space for callees + arguments for Sprintf
+virtual at $-4
+.old_backups_left	dd	?
+end virtual
 .frame_offset:
 .savebackups_dir	rq	2
 .tmp_filename		rq	2
 .new_backup_filename	rq	2
-.old_backups_left	dd	?
-	align 16
+assert ($ mod 16) = 8
 .stack_size = $
+	dq	?	; saved rdi
 	dq	?	; saved rbx
 	dq	?	; return address
 ; use shadow space of the caller
@@ -457,8 +391,10 @@ virtual at 0
 end virtual
 	push	rbx
 .prolog_offs1 = $ - make_backup
-	add	rsp, -.stack_size
+	push	rdi
 .prolog_offs2 = $ - make_backup
+	add	rsp, -.stack_size
+.prolog_offs3 = $ - make_backup
 .prolog_size = $ - make_backup
 	lea	rbx, [rsp + .frame_offset]
 	lea	rcx, [rbx - .frame_offset + .savebackups_dir]
@@ -575,6 +511,7 @@ end virtual
 	mov	rcx, [rbx - .frame_offset + .savebackups_dir]
 	call	[fmemory_free]
 	add	rsp, .stack_size
+	pop	rdi
 	pop	rbx
 	ret
 .end:
@@ -628,7 +565,8 @@ end if
 make_backup_unwind:
 	db	1, make_backup.prolog_size, make_backup_unwind.size / 2, 0
 .start:
-	db	make_backup.prolog_offs2, 2 + ((make_backup.stack_size - 8) / 8) * 10h
+	db	make_backup.prolog_offs3, 2 + ((make_backup.stack_size - 8) / 8) * 10h
+	db	make_backup.prolog_offs2, 70h ; UWOP_PUSH_NONVOL=0, rdi->7
 	db	make_backup.prolog_offs1, 30h ; UWOP_PUSH_NONVOL=0, rbx->3
 .size = $ - .start
 if .size mod 4
@@ -642,11 +580,6 @@ if $ = fixups_start
 	dd	0, 8	; fake entry
 end if
 end data
-
-nag_caption	db	'Failed to prevent unnecessary saves', 0
-nag_text	db	'dxgi.dll cannot apply the patch because the executable has changed.', 13, 10
-		db	'Maybe the developers have finally fixed the issue and you can just delete dxgi.dll from the game folder.', 13, 10
-		db	'Maybe not and you need an updated version or another way to deal with the issue.', 0
 
 patch_failed_text:
 	db	'Some patches have not been applied. Probably the executable has been updated and you need to get a new version of the patch.', 0
@@ -670,13 +603,11 @@ strChargeJumpRechargeDelay	du	'ChargeJumpRechargeDelay', 0
 
 section '.data' data readable writable
 original	rq	3
-continue_after_patch	dq	?
 savegametoslot	dq	?
 fstring_add	dq	?
 fmemory_free	dq	?
 getsavegamepath	dq	?
 projectsaveddir	dq	?
-last_tick_count	dd	?
 max_backups	dd	?
 backup_made	db	?
 use_temporary_file db	?
