@@ -5,30 +5,30 @@ include 'win64a.inc'
 ; * we're going to read/write from fixed addresses, ImageSize of the executable should cover them
 expected_image_size = 0x6110000
 ; * we're going to patch a concrete function, verify the bytes we'll rewrite
-patched_function = 0x135F5F0
+patched_function = 0x135F2F0
 expected_original_value1 = 0x4154415756535540
 expected_original_value2 = 0x48574156
 ; * expected_original_value is a not-so-unique function prolog;
 ;   to make sure we're not going to patch a random function,
 ;   check that it references the string "PlayerLoc" at the concrete location
-safety_check_PlayerLoc_addr = 0x135F7A0
+safety_check_PlayerLoc_addr = 0x135F4A0
 
 ; there are two versions of IsSolved, let's call them IsSolved and IsSolvedBy;
 ; the second one additionally takes a player identifier.
 ; The first one is crucial, patch both just in case.
-is_solved_offset = 0x1431965
-is_solved_by_offset = 0x1431B2C
+is_solved_offset = 0x1431665
+is_solved_by_offset = 0x143182C
 
-save_game_offset = 0x12C678E
+save_game_offset = 0x12C66FE
 expected_save_game_original_value1 = 0x30508D4840488B48
 expected_save_game_original_value2 = 0x48C03345
 
 fstring_add_offset = 0x8822F0 ; FString operator+(const FString&, const wchar_t*)
-fmemory_free_offset = 0x162B070 ; FMemory::Free(void*)
-getsavegamepath_offset = 0x335D6D0 ; FString FGenericSaveGameSystem::GetSaveGamePath(const wchar_t*)
-projectsaveddir_offset = 0x16FF5C0
+fmemory_free_offset = 0x162AD30 ; FMemory::Free(void*)
+getsavegamepath_offset = 0x335D270 ; FString FGenericSaveGameSystem::GetSaveGamePath(const wchar_t*)
+projectsaveddir_offset = 0x16FF280
 
-ChargeJumpRechargeDelay_setter_offset = 0x1326374
+ChargeJumpRechargeDelay_setter_offset = 0x13262E4
 ChargeJumpRechargeDelay_setter_expected = 0x0000000AC086C749
 
 ; allowed time between saves of the position, in milliseconds
