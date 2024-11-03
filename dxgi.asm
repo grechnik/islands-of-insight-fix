@@ -23,8 +23,14 @@ projectsaveddir_offset = 0x16FF280
 ChargeJumpRechargeDelay_setter_offset = 0x13262E4
 ChargeJumpRechargeDelay_setter_expected = 0x0000000AC086C749
 
-; allowed time between saves of the position, in milliseconds
-allow_interval = 60 * 1000  ; 1 minute
+mirrormaze_size_check_offset = 0x1448695
+mirrormaze_size_check_expected = 0x000005788F100FF3
+
+; UQuestSystemComponent::Tick calls UGISProgression::AddRewards twice
+; so sparks (and mirabilis from monolith fragments) are counted twice
+; but these are only virtual and will be deducted back after restart
+call_addrewards_offset1 = 0x1372E52
+call_addrewards_offset2 = 0x1365D10
 
 section '.text' code readable executable
 
@@ -37,9 +43,9 @@ virtual at 0
 .saved_r9	dq	?
 .func	dd	?
 .tmp2	dd	?
-.tmp	dd	?
 .patch_failed	db	?
 	align 2
+.tmp	dd	?	; used by make_writable/restore_protection
 .orig_dll_name:
 	rw	104h + 14h
 	align 16
@@ -134,11 +140,8 @@ end virtual
 	call	[GetPrivateProfileIntW]
 	test	eax, eax
 	jz	.skip_solved_patch
-	mov	rcx, rdi
 	mov	edx, is_solved_by_offset - is_solved_offset + 1
-	mov	r8d, PAGE_READWRITE
-	lea	r9, [rbx + .tmp - .orig_dll_name]
-	call	[VirtualProtect]
+	call	make_writable.large
 ; safety check: expect 7E to patch with EB
 	mov	cl, 1
 	cmp	byte [rdi], 0x7E
@@ -155,11 +158,8 @@ end virtual
 	mov	byte [rax], 0xEB
 @@:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
-	mov	rcx, rdi
 	mov	edx, is_solved_by_offset - is_solved_offset + 1
-	lea	r9, [rbx + .tmp - .orig_dll_name]
-	mov	r8d, [r9]
-	call	[VirtualProtect]
+	call	restore_protection.large
 .skip_solved_patch:
 ; patch the caller of UGameplayStatics::SaveGameToSlot for save-to-temporary/move-temporary-to-main
 ; this assumes the availability of fstring_add, fmemory_free, getsavegamepath
@@ -191,11 +191,7 @@ end virtual
 	call	rax
 	mov	[projectsaveddir], rax
 @@:
-	mov	rcx, rdi
-	mov	edx, 12
-	lea	r8d, [rdx-12+PAGE_READWRITE]
-	lea	r9, [rbx + .tmp - .orig_dll_name]
-	call	[VirtualProtect]
+	call	make_writable
 	mov	rax, expected_save_game_original_value1
 	mov	cl, 1
 	cmp	[rdi], rax
@@ -212,11 +208,7 @@ end virtual
 	mov	cl, 0
 @@:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
-	mov	rcx, rdi
-	mov	edx, 12
-	lea	r9, [rbx + .tmp - .orig_dll_name]
-	mov	r8d, [r9]
-	call	[VirtualProtect]
+	call	restore_protection
 .skip_savegame_patch:
 ; patch ChargeJumpRechargeDelay
 	add	rdi, ChargeJumpRechargeDelay_setter_offset - save_game_offset
@@ -232,23 +224,54 @@ end virtual
 	mov	rdx, ChargeJumpRechargeDelay_setter_expected
 	cmp	qword [rdi], rdx
 	jnz	.done_recharge_patch
-	mov	rcx, rdi
-	mov	edx, 12
-	lea	r8d, [rdx-12+PAGE_READWRITE]
-	lea	r9, [rbx + .tmp - .orig_dll_name]
-	call	[VirtualProtect]
+	call	make_writable
 	movss	xmm0, [rbx + .tmp2 - .orig_dll_name]
 	cvtdq2ps xmm0, xmm0
 	movss	[rdi+7], xmm0
-	mov	rcx, rdi
-	mov	edx, 12
-	lea	r9, [rbx + .tmp - .orig_dll_name]
-	mov	r8d, [r9]
-	call	[VirtualProtect]
+	call	restore_protection
 	mov	cl, 0
 .done_recharge_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
 .skip_recharge_patch:
+; patch away size check in AMirrorMazePuzzle
+	add	rdi, mirrormaze_size_check_offset - ChargeJumpRechargeDelay_setter_offset
+	mov	rax, mirrormaze_size_check_expected
+	mov	cl, 1
+	cmp	qword [rdi], rax
+	jnz	@f
+	call	make_writable
+	mov	word [rdi], 0x4AEB
+	call	restore_protection
+	mov	cl, 0
+@@:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
+	add	rdi, call_addrewards_offset1 - mirrormaze_size_check_offset
+	lea	rcx, [strGameplay]
+	lea	rdx, [strFixQuestRewards]
+	xor	r8d, r8d
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	test	eax, eax
+	jz	.skip_fixrewards_patch
+	mov	cl, 1
+	cmp	byte [rdi], 0xE8
+	jnz	.done_fixrewards_patch
+	lea	rax, [rdi + call_addrewards_offset2 - call_addrewards_offset1]
+	cmp	byte [rax], 0xE8
+	jnz	.done_fixrewards_patch
+	add	eax, [rax + 1]
+	mov	edx, [rdi + 1]
+	add	edx, edi
+	cmp	eax, edx
+	jnz	.done_fixrewards_patch
+	call	make_writable
+	mov	byte [rdi], 0x90
+	mov	dword [rdi+1], 0x90909090
+	call	restore_protection
+	mov	cl, 0
+.done_fixrewards_patch:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
+.skip_fixrewards_patch:
 	cmp	[rbx + .patch_failed - .orig_dll_name], 0
 	jz	.done
 .nag:
@@ -301,6 +324,32 @@ end virtual
 load a byte from @b
 assert a = 0x41
 store byte a+8 at @b
+.end:
+
+make_writable:
+	mov	edx, 12
+.large:
+	sub	rsp, 28h
+.prolog_size = $ - make_writable
+	mov	rcx, rdi
+	mov	r8d, PAGE_READWRITE
+	lea	r9, [rbx - 4]
+	call	[VirtualProtect]
+	add	rsp, 28h
+	ret
+.end:
+
+restore_protection:
+	mov	edx, 12
+.large:
+	sub	rsp, 28h
+.prolog_size = $ - restore_protection
+	mov	rcx, rdi
+	lea	r9, [rbx - 4]
+	mov	r8d, [r9]
+	call	[VirtualProtect]
+	add	rsp, 28h
+	ret
 .end:
 
 save_game_patched:
@@ -541,6 +590,8 @@ data 3  ; IMAGE_DIRECTORY_ENTRY_EXCEPTION
 	dd	rva CreateDXGIFactory, rva CreateDXGIFactory.end, rva CreateDXGIFactory_unwind
 	dd	rva save_game_patched, rva save_game_patched.end, rva save_game_patched_unwind
 	dd	rva make_backup, rva make_backup.end, rva make_backup_unwind
+	dd	rva make_writable, rva make_writable.end, rva make_writable_unwind
+	dd	rva restore_protection, rva restore_protection.end, rva make_writable_unwind ; the prologues are identical
 end data
 
 CreateDXGIFactory_unwind:
@@ -568,6 +619,14 @@ make_backup_unwind:
 	db	make_backup.prolog_offs3, 2 + ((make_backup.stack_size - 8) / 8) * 10h
 	db	make_backup.prolog_offs2, 70h ; UWOP_PUSH_NONVOL=0, rdi->7
 	db	make_backup.prolog_offs1, 30h ; UWOP_PUSH_NONVOL=0, rbx->3
+.size = $ - .start
+if .size mod 4
+	dw	0
+end if
+make_writable_unwind: ; also used for restore_protection
+	db	1, make_writable.prolog_size, make_writable_unwind.size / 2, 0
+.start:
+	db	make_writable.prolog_size, 2 + ((28h - 8) / 8) * 10h
 .size = $ - .start
 if .size mod 4
 	dw	0
@@ -600,6 +659,7 @@ strMaxBackups	du	'MaxBackups', 0
 strGameplay	du	'Gameplay', 0
 strSolvedStaySolved	du	'SolvedStaySolved', 0
 strChargeJumpRechargeDelay	du	'ChargeJumpRechargeDelay', 0
+strFixQuestRewards	du	'FixQuestRewards', 0
 
 section '.data' data readable writable
 original	rq	3
