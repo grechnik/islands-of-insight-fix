@@ -32,6 +32,11 @@ mirrormaze_size_check_expected = 0x000005788F100FF3
 call_addrewards_offset1 = 0x1372E52
 call_addrewards_offset2 = 0x1365D10
 
+; ...and if you have got negative sparks as a result,
+; you won't be able to take quests with UnlockCost = 0, which is all of them
+exec_getunlockcost_offset = 0x15DBD55
+exec_getunlockcost_expected = 0x0130818B
+
 section '.text' code readable executable
 
 CreateDXGIFactory:
@@ -272,6 +277,17 @@ end virtual
 .done_fixrewards_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
 .skip_fixrewards_patch:
+	mov	cl, 1
+	add	rdi, exec_getunlockcost_offset - call_addrewards_offset1
+	cmp	dword [rdi], exec_getunlockcost_expected
+	jnz	@f
+	call	make_writable
+	mov	word [rdi], 0xB890
+	mov	dword [rdi+2], -1000000000
+	call	restore_protection
+	mov	cl, 0
+@@:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
 	cmp	[rbx + .patch_failed - .orig_dll_name], 0
 	jz	.done
 .nag:
