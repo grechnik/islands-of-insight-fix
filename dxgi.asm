@@ -37,6 +37,10 @@ call_addrewards_offset2 = 0x1365D10
 exec_getunlockcost_offset = 0x15DBD55
 exec_getunlockcost_expected = 0x0130818B
 
+; make UQuestSystemComponent believe that APuzzleBase::canAwardAutoQuest = false
+autoquestcheck_offset = 0x1377D62
+autoquestcheck_expected = 0x840F000003C9B538 ; 6 last bytes of previous instruction + 2 bytes of jz
+
 section '.text' code readable executable
 
 CreateDXGIFactory:
@@ -288,6 +292,25 @@ end virtual
 	mov	cl, 0
 @@:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
+	add	rdi, autoquestcheck_offset - exec_getunlockcost_offset
+	lea	rcx, [strGameplay]
+	lea	rdx, [strDisableWandererQuests]
+	xor	r8d, r8d
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	test	eax, eax
+	jz	.skip_autoquestcheck_patch
+	mov	cl, 1
+	mov	rax, autoquestcheck_expected
+	cmp	qword [rdi-6], rax
+	jnz	.done_autoquestcheck_patch
+	call	make_writable
+	mov	word [rdi], 0xE990
+	call	restore_protection
+	mov	cl, 0
+.done_autoquestcheck_patch:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
+.skip_autoquestcheck_patch:
 	cmp	[rbx + .patch_failed - .orig_dll_name], 0
 	jz	.done
 .nag:
@@ -676,6 +699,7 @@ strGameplay	du	'Gameplay', 0
 strSolvedStaySolved	du	'SolvedStaySolved', 0
 strChargeJumpRechargeDelay	du	'ChargeJumpRechargeDelay', 0
 strFixQuestRewards	du	'FixQuestRewards', 0
+strDisableWandererQuests	du	'DisableWandererQuests', 0
 
 section '.data' data readable writable
 original	rq	3
