@@ -41,6 +41,10 @@ exec_getunlockcost_expected = 0x0130818B
 autoquestcheck_offset = 0x1377D62
 autoquestcheck_expected = 0x840F000003C9B538 ; 6 last bytes of previous instruction + 2 bytes of jz
 
+; make AViewfinderCamera believe that ASophiaCharacter::doHighQualityViewfinderCapture = true
+sightseer_capture_offset = 0x14D9FE9
+sightseer_capture_expected = 0x740000000739BB80
+
 section '.text' code readable executable
 
 CreateDXGIFactory:
@@ -311,6 +315,25 @@ end virtual
 .done_autoquestcheck_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
 .skip_autoquestcheck_patch:
+	add	rdi, sightseer_capture_offset - autoquestcheck_offset
+	lea	rcx, [strGameplay]
+	lea	rdx, [strHighQualitySightSeerCapture]
+	xor	r8d, r8d
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	test	eax, eax
+	jz	.skip_sightseer_capture_patch
+	mov	cl, 1
+	mov	rax, sightseer_capture_expected
+	cmp	qword [rdi-7], rax
+	jnz	.done_sightseer_capture_patch
+	call	make_writable
+	mov	byte [rdi+1], 0
+	call	restore_protection
+	mov	cl, 0
+.done_sightseer_capture_patch:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
+.skip_sightseer_capture_patch:
 	cmp	[rbx + .patch_failed - .orig_dll_name], 0
 	jz	.done
 .nag:
@@ -700,6 +723,7 @@ strSolvedStaySolved	du	'SolvedStaySolved', 0
 strChargeJumpRechargeDelay	du	'ChargeJumpRechargeDelay', 0
 strFixQuestRewards	du	'FixQuestRewards', 0
 strDisableWandererQuests	du	'DisableWandererQuests', 0
+strHighQualitySightSeerCapture	du	'HighQualitySightSeerCapture', 0
 
 section '.data' data readable writable
 original	rq	3
