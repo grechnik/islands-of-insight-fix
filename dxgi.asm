@@ -53,6 +53,11 @@ tarray216_resize_grow_expected = 0xB8E1F74897B425ED
 FLocationMarkerData_constructor_offset = 0x1205A70
 FLocationMarkerData_constructor_expected = 0x01010C41C7084189
 
+; hook ASophiaCharacter::PutMarker to point to the nearest puzzle
+putmarker_offset = 0x1358FE0
+putmarker_expected1 = 0x24548820245C8948
+putmarker_expected2 = 0x565508244C894810
+
 section '.text' code readable executable
 
 CreateDXGIFactory:
@@ -348,7 +353,14 @@ end virtual
 	xor	r8d, r8d
 	mov	r9, rbx
 	call	[GetPrivateProfileIntW]
-	test	eax, eax
+	mov	[show_nearest_unsolved], al
+	lea	rcx, [strGameplay]
+	lea	rdx, [strEmoteMarksNearestUnsolved]
+	xor	r8d, r8d
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	mov	byte [rbx + .tmp2 - .orig_dll_name], al
+	or	al, [show_nearest_unsolved]
 	jz	.skip_shownearest_patch
 	lea	rcx, [strGameplay]
 	lea	rdx, [strHiddenPuzzlesMarkerMaxDistance]
@@ -376,6 +388,26 @@ end virtual
 	cmp	[rax+24h], rdx
 	jnz	.done_shownearest_patch
 	mov	[FLocationMarkerData_constructor], rax
+	cmp	byte [rbx + .tmp2 - .orig_dll_name], 0
+	jz	@f
+	add	rax, putmarker_offset - FLocationMarkerData_constructor_offset
+	mov	rdx, putmarker_expected1
+	cmp	qword [rax], rdx
+	jnz	.done_shownearest_patch
+	mov	rdx, putmarker_expected2
+	cmp	qword [rax+8], rdx
+	jnz	.done_shownearest_patch
+	mov	rdi, rax
+	add	rax, 14
+	mov	[putmarker_continue], rax
+	call	make_writable
+	mov	word [rdi], 0xB848
+	lea	rax, [hook_putmarker]
+	mov	[rdi+2], rax
+	mov	word [rdi+10], 0xE0FF
+	call	restore_protection
+	add	rdi, collectmarkers_exit_offset - putmarker_offset
+@@:
 	call	make_writable
 	mov	word [rdi], 0xB848
 	lea	rax, [additional_markers]
@@ -679,40 +711,53 @@ end virtual
 	ret
 .end:
 
-additional_markers:
+; rcx = ASophiaCharacter*, rax = mask of puzzles to find
+; returns rax = pointer to puzzle, xmm0 = marker coordinates
+find_nearest_unsolved:
 ; we'll use xmm6 as the best distance, xmm7 as the current distance,
 ; xmm8 as player position, xmm9 as best coordinates, xmm10 as current coordinates
-; xmm6 is already saved/restored by the original code
-	movaps	[rbp], xmm7
-.prolog_offs1 = $ - additional_markers
-	movaps	[rbp+10h], xmm8
-.prolog_offs2 = $ - additional_markers
-	movaps	[rbp+20h], xmm9
-.prolog_offs3 = $ - additional_markers
-	movaps	[rbp+30h], xmm10
-.prolog_offs4 = $ - additional_markers
-.prolog_size = $ - additional_markers
-; called twice per frame, for the screen and for the map. Don't do the same work twice
-	cmp	byte [rbp+1E0h], 0
-	jz	.done
-; r12 = UMarkerComponent*, rsi = AGameState*
-	mov	rax, [r12+0A0h] ; UActorComponent::OwnerPrivate
-	mov	rax, [rax+220h]	; AHUD::PlayerOwner
-	mov	rax, [rax+250h]	; AController::Pawn
-	mov	r14, [rax+878h]	; ASophiaCharacter::CurDungeon
-	mov	rax, [rax+130h]	; AActor::RootComponent
+	push	rbx
+.prolog_offs1 = $ - find_nearest_unsolved
+	push	rsi
+.prolog_offs2 = $ - find_nearest_unsolved
+	push	rdi
+.prolog_offs3 = $ - find_nearest_unsolved
+	push	rbp
+.prolog_offs4 = $ - find_nearest_unsolved
+	push	r14
+.prolog_offs5 = $ - find_nearest_unsolved
+	push	r15
+.prolog_offs6 = $ - find_nearest_unsolved
+	sub	rsp, 78h
+.prolog_offs7 = $ - find_nearest_unsolved
+	mov	ebp, eax
+	mov	rax, rsp
+	movaps	[rax+20h], xmm6
+.prolog_offs8 = $ - find_nearest_unsolved
+	movaps	[rax+30h], xmm7
+.prolog_offs9 = $ - find_nearest_unsolved
+	movaps	[rax+40h], xmm8
+.prolog_offs10 = $ - find_nearest_unsolved
+	movaps	[rax+50h], xmm9
+.prolog_offs11 = $ - find_nearest_unsolved
+	movaps	[rax+60h], xmm10
+.prolog_offs12 = $ - find_nearest_unsolved
+.prolog_size = $ - find_nearest_unsolved
+	mov	r14, [rcx+878h]	; ASophiaCharacter::CurDungeon
+	mov	rax, [rcx+130h]	; AActor::RootComponent
 	movups	xmm8, [rax+1D0h]	; get player position
 	mov	eax, 7F800000h	; fp32 infinity
 	movd	xmm6, eax
+	mov	rax, [rcx]
+	call	qword [rax+160h]	; get UWorld*
+	mov	rcx, [rax+120h]	; get ASophiaPlayerState*
 	xor	r15, r15
-	mov	edi, [rsi+390h]
-	mov	rsi, [rsi+388h]
+	mov	edi, [rcx+390h]
+	mov	rsi, [rcx+388h]
 .findnearest:
 	dec	edi
 	js	.oknearest
 	mov	rcx, [rsi+rdi*8]
-	xor	ebx, ebx
-.retry_if_matchbox:
 ; find the relevant point
 	movzx	eax, byte [rcx+254h]
 	cmp	al, -1	; something technical including instances of AMonument for wall slots (but not puzzles themselves)
@@ -734,7 +779,38 @@ additional_markers:
 	cmp	al, 26	; just ignore rosary
 	jz	.findnearest
 @@:
+; puzzle boxes all have the same type in SerializedPuzzleName;
+; for the emote markers we need to distinguish actual logic grids and other types of grids
+	test	al, al
+	jnz	@f
+	mov	rdx, [rcx+6A0h]
+	mov	rbx, [rdx+688h]
+	mov	edx, [rdx+690h]
+	cmp	edx, 2 ; EModifierType__CompleteThePattern
+	jbe	@f
+	cmp	byte [rbx+2], 0
+	jnz	.not_logic_grid
+	cmp	edx, 4 ; EModifierType__MatchTheAudio
+	jbe	@f
+	cmp	byte [rbx+4], 0
+	jnz	.not_logic_grid
+	cmp	edx, 12 ; EModifierType__Memory
+	jbe	@f
+	cmp	byte [rbx+12], 0
+	jz	@f
+.not_logic_grid:
+	mov	al, 3 ; this is actually completeThePattern, but our current masks don't care about the exact type
+@@:
+	mov	ebx, eax
+	cmp	al, 31
+	jbe	@f
+	mov	bl, 31
+@@:
+	bt	ebp, ebx
+	jnc	.findnearest
 ; viewfinder's reference point is the solving place, we need ViewfinderImage->planeMesh instead
+	xor	ebx, ebx
+.retry_if_matchbox:
 	cmp	al, 31
 	jnz	.not_viewfinder
 	mov	rdx, [rcx+5E8h]
@@ -839,15 +915,69 @@ additional_markers:
 	movss	xmm6, xmm7
 	movaps	xmm9, xmm10
 .skip:
+	movzx	eax, byte [rcx+254h]
 	inc	ebx
-	cmp	byte [rcx+254h], 18
+	cmp	al, 18
 	jnz	.findnearest
 	cmp	ebx, 2
 	jb	.retry_if_matchbox
 	jmp	.findnearest
 .oknearest:
-	test	r15, r15
+.done:
+	mov	rcx, rsp
+	mov	rax, r15
+	movaps	xmm0, xmm9
+	movaps	xmm6, [rcx+20h]
+	movaps	xmm7, [rcx+30h]
+	movaps	xmm8, [rcx+40h]
+	movaps	xmm9, [rcx+50h]
+	movaps	xmm10, [rcx+60h]
+	add	rsp, 78h
+	pop	r15
+	pop	r14
+	pop	rbp
+	pop	rdi
+	pop	rsi
+	pop	rbx
+	ret
+.end:
+
+additional_markers:
+; called twice per frame, for the screen and for the map. Don't do the same work twice
+	cmp	byte [rbp+1E0h], 0
 	jz	.done
+; r12 = UMarkerComponent*, rsi = AGameState*
+	mov	rbx, [r12+0A0h]	; UActorComponent::OwnerPrivate
+	mov	rbx, [rbx+220h]	; AHUD::PlayerOwner
+	mov	rbx, [rbx+250h]	; AController::Pawn
+	mov	rax, [current_marker_puzzle]
+	test	rax, rax
+	jz	.no_current
+	mov	ecx, [rsi+390h]
+	mov	rdi, [rsi+388h]
+	repnz scasq
+	jnz	.reset_current
+	mov	rcx, rax
+	mov	rax, [rax]
+	call	qword [rax+730h]
+	movaps	xmm0, xword [current_marker_pos]
+	test	al, al
+	mov	rax, [current_marker_puzzle]
+	jz	.add_marker
+.reset_current:
+; current_marker_puzzle either despawned or has been solved
+	and	[current_marker_puzzle], 0
+.no_current:
+	cmp	[show_nearest_unsolved], 0
+	jz	.done
+	mov	rcx, rbx
+	or	eax, -1
+	call	find_nearest_unsolved
+	test	rax, rax
+	jz	.done
+.add_marker:
+	mov	r15, rax
+	movaps	xmm6, xmm0
 ; we have got our puzzle, now fill the marker
 	lea	rcx, [rsp+30h]
 	mov	ebx, [rcx+8]
@@ -862,21 +992,56 @@ additional_markers:
 	add	rdi, [rsp+30h]
 	mov	rcx, rdi
 	call	[FLocationMarkerData_constructor]
-	movups	[rdi], xmm9
+	movups	[rdi], xmm6
 	mov	dword [rdi+0Ch], 1 ; VisibleOnScreen = true, VisibleOnMap = showEverywhere = ShowOverFog = false
 	mov	rax, [r15+2C0h]
 	mov	[rdi+20h], rax ; worldTex
 	mov	rax, [r15+2C8h]
 	mov	[rdi+28h], rax ; mapTex
 .done:
-	movaps	xmm7, [rbp]
-	movaps	xmm8, [rbp+10h]
-	movaps	xmm9, [rbp+20h]
-	movaps	xmm10, [rbp+30h]
 	mov	rax, [rsp+30h]
 	mov	rcx, [rbp+1D8h]
 	mov	[rcx], rax
 	jmp	[additionalmarkers_continue]
+.end:
+
+hook_putmarker:
+; rcx = ASophiaCharacter*, dl = emote id
+; Numpad1 -> dl=1, Numpad2 -> dl=3, Numpad3 -> dl=2, Numpad4 -> dl=4, Numpad5 -> dl=5
+	mov	eax, 1 shl 0 ; action 2: logic grids
+	cmp	dl, 3
+	jz	.action
+	mov	eax, (1 shl 10) or (1 shl 11) or (1 shl 12) ; action 3: hidden archways, cubes and rings
+	cmp	dl, 2
+	jz	.action
+	mov	eax, not ((1 shl 0) or (1 shl 10) or (1 shl 11) or (1 shl 12)) ; action 5: everything else
+	cmp	dl, 5
+	jz	.action
+	mov	[rsp+20h], rbx
+	mov	[rsp+10h], dl
+	mov	[rsp+8], rcx
+	jmp	[putmarker_continue]
+.action:
+	cmp	[current_active_marker_type], dl
+	jnz	.findnew
+	cmp	[current_marker_puzzle], 0
+	jz	.findnew
+	and	[current_marker_puzzle], 0
+	ret
+.findnew:
+	mov	[current_active_marker_type], dl
+; the code above can be considered as a leaf function,
+; where the default "just pop the return address" works for unwinding,
+; but we need the actual unwind info here
+.start_stack_use:
+	sub	rsp, 28h
+.prolog_offs1 = $ - .start_stack_use
+.prolog_size = $ - .start_stack_use
+	call	find_nearest_unsolved
+	mov	[current_marker_puzzle], rax
+	movaps	xword [current_marker_pos], xmm0
+	add	rsp, 28h
+	ret
 .end:
 
 section '.rdata' data readable
@@ -909,7 +1074,9 @@ data 3  ; IMAGE_DIRECTORY_ENTRY_EXCEPTION
 	dd	rva make_backup, rva make_backup.end, rva make_backup_unwind
 	dd	rva make_writable, rva make_writable.end, rva make_writable_unwind
 	dd	rva restore_protection, rva restore_protection.end, rva make_writable_unwind ; the prologues are identical
+	dd	rva find_nearest_unsolved, rva find_nearest_unsolved.end, rva find_nearest_unsolved_unwind
 	dd	rva additional_markers, rva additional_markers.end, rva additional_markers_unwind
+	dd	rva hook_putmarker.start_stack_use, rva hook_putmarker.end, rva hook_putmarker_unwind
 end data
 
 CreateDXGIFactory_unwind:
@@ -949,18 +1116,34 @@ make_writable_unwind: ; also used for restore_protection
 if .size mod 4
 	dw	0
 end if
-additional_markers_unwind:
-	db	1, additional_markers.prolog_size, additional_markers_unwind.size / 2, 0
+find_nearest_unsolved_unwind:
+	db	1, find_nearest_unsolved.prolog_size, find_nearest_unsolved_unwind.size / 2, 0
 .start:
-	db	additional_markers.prolog_offs4, 8 + 10 * 10h	; UWOP_SAVE_XMM128 for xmm10
-	dw	0x13	; saved to [rsp+130h]
-	db	additional_markers.prolog_offs3, 8 + 9 * 10h	; UWOP_SAVE_XMM128 for xmm9
-	dw	0x12	; saved to [rsp+120h]
-	db	additional_markers.prolog_offs2, 8 + 8 * 10h	; UWOP_SAVE_XMM128 for xmm8
-	dw	0x11	; saved to [rsp+110h]
-	db	additional_markers.prolog_offs1, 8 + 7 * 10h	; UWOP_SAVE_XMM128 for xmm7
-	dw	0x10	; saved to [rsp+100h]
-; we inherit these from the main code
+	db	find_nearest_unsolved.prolog_offs12, 8 + 10 * 10h ; UWOP_SAVE_XMM128 for xmm10
+	dw	6	; saved to [rsp+60h]
+	db	find_nearest_unsolved.prolog_offs11, 8 + 9 * 10h ; UWOP_SAVE_XMM128 for xmm9
+	dw	5	; saved to [rsp+50h]
+	db	find_nearest_unsolved.prolog_offs10, 8 + 8 * 10h ; UWOP_SAVE_XMM128 for xmm8
+	dw	4	; saved to [rsp+40h]
+	db	find_nearest_unsolved.prolog_offs9, 8 + 7 * 10h ; UWOP_SAVE_XMM128 for xmm7
+	dw	3	; saved to [rsp+30h]
+	db	find_nearest_unsolved.prolog_offs8, 8 + 6 * 10h ; UWOP_SAVE_XMM128 for xmm6
+	dw	2	; saved to [rsp+20h]
+	db	find_nearest_unsolved.prolog_offs7, 2 + ((78h - 8) / 8) * 10h ; UWOP_ALLOC_SMALL for 78h bytes
+	db	find_nearest_unsolved.prolog_offs6, 0F0h	; UWOP_PUSH_NONVOL r15
+	db	find_nearest_unsolved.prolog_offs5, 0E0h	; UWOP_PUSH_NONVOL r14
+	db	find_nearest_unsolved.prolog_offs4, 50h	; UWOP_PUSH_NONVOL rbp
+	db	find_nearest_unsolved.prolog_offs3, 70h	; UWOP_PUSH_NONVOL rdi
+	db	find_nearest_unsolved.prolog_offs2, 60h	; UWOP_PUSH_NONVOL rsi
+	db	find_nearest_unsolved.prolog_offs1, 30h	; UWOP_PUSH_NONVOL rbx
+.size = $ - .start
+if .size mod 4
+	dw	0
+end if
+additional_markers_unwind:
+	db	1, 0, additional_markers_unwind.size / 2, 0
+.start:
+; we don't manipulate the stack ourselves, but inherit these from the main code
 	db	0, 8 + 6 * 10h	; UWOP_SAVE_XMM128 for xmm6
 	dw	27h	; saved to [rsp+270h]
 	db	0, 1	; UWOP_ALLOC_LARGE
@@ -973,6 +1156,14 @@ additional_markers_unwind:
 	db	0, 60h	; UWOP_PUSH_NONVOL rsi
 	db	0, 30h	; UWOP_PUSH_NONVOL rbx
 	db	0, 50h	; UWOP_PUSH_NONVOL rbp
+.size = $ - .start
+if .size mod 4
+	dw	0
+end if
+hook_putmarker_unwind:
+	db	1, hook_putmarker.prolog_size, hook_putmarker_unwind.size / 2, 0
+.start:
+	db	hook_putmarker.prolog_offs1, 2 + ((28h - 8) / 8) * 10h ; UWOP_ALLOC_SMALL for 78h bytes
 .size = $ - .start
 if .size mod 4
 	dw	0
@@ -1011,10 +1202,12 @@ strFixQuestRewards	du	'FixQuestRewards', 0
 strDisableWandererQuests	du	'DisableWandererQuests', 0
 strHighQualitySightSeerCapture	du	'HighQualitySightSeerCapture', 0
 strShowNearestUnsolved	du	'ShowNearestUnsolved', 0
+strEmoteMarksNearestUnsolved	du	'EmoteMarksNearestUnsolved', 0
 strHiddenPuzzlesMarkerMaxDistance	du	'HiddenPuzzlesMarkerMaxDistance', 0
 
 section '.data' data readable writable
 hide_radius	rq	4
+current_marker_pos	rq	4
 original	rq	3
 savegametoslot	dq	?
 fstring_add	dq	?
@@ -1024,6 +1217,10 @@ projectsaveddir	dq	?
 additionalmarkers_continue	dq	?
 tarray216_resize_grow	dq	?
 FLocationMarkerData_constructor	dq	?
+putmarker_continue	dq	?
+current_marker_puzzle	dq	?
 max_backups	dd	?
 backup_made	db	?
 use_temporary_file db	?
+show_nearest_unsolved	db	?
+current_active_marker_type	db	?
