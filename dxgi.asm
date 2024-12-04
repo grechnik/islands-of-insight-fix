@@ -45,6 +45,14 @@ autoquestcheck_expected = 0x840F000003C9B538 ; 6 last bytes of previous instruct
 sightseer_capture_offset = 0x14D9FE9
 sightseer_capture_expected = 0x740000000739BB80
 
+; insert extra marker for the nearest puzzle
+collectmarkers_exit_offset = 0x14FA45B
+collectmarkers_exit_expected = 0xD88D8B483024448B
+tarray216_resize_grow_offset = 0x0A4D4E0
+tarray216_resize_grow_expected = 0xB8E1F74897B425ED
+FLocationMarkerData_constructor_offset = 0x1205A70
+FLocationMarkerData_constructor_expected = 0x01010C41C7084189
+
 section '.text' code readable executable
 
 CreateDXGIFactory:
@@ -334,6 +342,50 @@ end virtual
 .done_sightseer_capture_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
 .skip_sightseer_capture_patch:
+	add	rdi, collectmarkers_exit_offset - sightseer_capture_offset
+	lea	rcx, [strGameplay]
+	lea	rdx, [strShowNearestUnsolved]
+	xor	r8d, r8d
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	test	eax, eax
+	jz	.skip_shownearest_patch
+	lea	rcx, [strGameplay]
+	lea	rdx, [strHiddenPuzzlesMarkerMaxDistance]
+	xor	r8d, r8d
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	cvtsi2ss xmm0, eax
+	unpcklps xmm0, xmm0
+	unpcklps xmm0, xmm0
+	mulps	xmm0, xword [hide_radius_multiplier]
+	movaps	xword [hide_radius], xmm0
+	mov	rax, collectmarkers_exit_expected
+	mov	cl, 1
+	cmp	qword [rdi+1], rax
+	jnz	.done_shownearest_patch
+	lea	rax, [rdi+15]
+	mov	[additionalmarkers_continue], rax
+	add	rax, tarray216_resize_grow_offset - (collectmarkers_exit_offset + 15)
+	mov	rdx, tarray216_resize_grow_expected
+	cmp	[rax+4Eh], rdx
+	jnz	.done_shownearest_patch
+	mov	[tarray216_resize_grow], rax
+	add	rax, FLocationMarkerData_constructor_offset - tarray216_resize_grow_offset
+	mov	rdx, FLocationMarkerData_constructor_expected
+	cmp	[rax+24h], rdx
+	jnz	.done_shownearest_patch
+	mov	[FLocationMarkerData_constructor], rax
+	call	make_writable
+	mov	word [rdi], 0xB848
+	lea	rax, [additional_markers]
+	mov	[rdi+2], rax
+	mov	word [rdi+10], 0xE0FF
+	call	restore_protection
+	mov	cl, 0
+.done_shownearest_patch:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
+.skip_shownearest_patch:
 	cmp	[rbx + .patch_failed - .orig_dll_name], 0
 	jz	.done
 .nag:
@@ -627,7 +679,210 @@ end virtual
 	ret
 .end:
 
+additional_markers:
+; we'll use xmm6 as the best distance, xmm7 as the current distance,
+; xmm8 as player position, xmm9 as best coordinates, xmm10 as current coordinates
+; xmm6 is already saved/restored by the original code
+	movaps	[rbp], xmm7
+.prolog_offs1 = $ - additional_markers
+	movaps	[rbp+10h], xmm8
+.prolog_offs2 = $ - additional_markers
+	movaps	[rbp+20h], xmm9
+.prolog_offs3 = $ - additional_markers
+	movaps	[rbp+30h], xmm10
+.prolog_offs4 = $ - additional_markers
+.prolog_size = $ - additional_markers
+; called twice per frame, for the screen and for the map. Don't do the same work twice
+	cmp	byte [rbp+1E0h], 0
+	jz	.done
+; r12 = UMarkerComponent*, rsi = AGameState*
+	mov	rax, [r12+0A0h] ; UActorComponent::OwnerPrivate
+	mov	rax, [rax+220h]	; AHUD::PlayerOwner
+	mov	rax, [rax+250h]	; AController::Pawn
+	mov	r14, [rax+878h]	; ASophiaCharacter::CurDungeon
+	mov	rax, [rax+130h]	; AActor::RootComponent
+	movups	xmm8, [rax+1D0h]	; get player position
+	mov	eax, 7F800000h	; fp32 infinity
+	movd	xmm6, eax
+	xor	r15, r15
+	mov	edi, [rsi+390h]
+	mov	rsi, [rsi+388h]
+.findnearest:
+	dec	edi
+	js	.oknearest
+	mov	rcx, [rsi+rdi*8]
+	xor	ebx, ebx
+.retry_if_matchbox:
+; find the relevant point
+	movzx	eax, byte [rcx+254h]
+	cmp	al, -1	; something technical including instances of AMonument for wall slots (but not puzzles themselves)
+	jz	.findnearest
+; outside of dungeons: ignore dungeon puzzles, ignore gyroRing and rosary
+; inside of a dungeon: ignore other dungeon puzzles, include mainland puzzles, include gyroRing and rosary from the same dungeon
+	mov	rdx, [rcx+4E8h]
+	cmp	rdx, r14
+	jz	.samedungeon
+	test	r14, r14
+	jz	.findnearest
+	test	rdx, rdx
+	jnz	.findnearest
+.samedungeon:
+	test	rdx, rdx
+	jnz	@f
+	cmp	al, 9	; just ignore gyroRing
+	jz	.findnearest
+	cmp	al, 26	; just ignore rosary
+	jz	.findnearest
+@@:
+; viewfinder's reference point is the solving place, we need ViewfinderImage->planeMesh instead
+	cmp	al, 31
+	jnz	.not_viewfinder
+	mov	rdx, [rcx+5E8h]
+	test	rdx, rdx
+	jz	.findnearest
+	mov	rdx, [rdx+258h]
+	jmp	.position_from_component
+.not_viewfinder:
+; for seek5, racingrings and followtheshiny the reference point is usually correct,
+; but sometimes a few meters off; get a point aligned with the visuals
+	cmp	al, 28
+	jnz	.not_seek5
+	mov	rdx, [rcx+518h]	; CentralPillar
+	jmp	.position_from_component
+.not_seek5:
+	cmp	al, 24
+	jnz	.not_racingrings
+	mov	rdx, [rcx+568h]	; StartingPlatform
+	jmp	.position_from_component
+.not_racingrings:
+	cmp	al, 4
+	jnz	.not_followtheshiny
+	mov	rdx, [rcx+548h]	; ShinyMesh
+	jmp	.position_from_component
+.not_followtheshiny:
+; for racingballs, there are several relevant points,
+; but the reference point is not one of them;
+; get the middle point in the array because why not
+	cmp	al, 23
+	jnz	.not_racingballs
+	mov	eax, [rcx+5E8h]
+	test	eax, eax
+	jz	.not_racingballs
+	shr	eax, 1
+	mov	rdx, [rcx+5E0h]
+	mov	rdx, [rdx+rax*8]
+	jmp	.position_from_component
+.not_racingballs:
+; for matchbox, repeat the loop twice for both components
+	cmp	al, 18
+	jnz	.not_matchbox
+	mov	rdx, [rcx+508h+rbx*8]
+	jmp	.position_from_component
+.not_matchbox:
+.position_from_actor:
+; by default, just take the reference point from the root component
+	mov	rdx, [rcx+130h]
+.position_from_component:
+	movups	xmm7, [rdx+1D0h]
+; for hidden archways, cubes, rings, light patterns and matchboxes add a random offset
+; hiddenArchway=10, hiddenCube=11, hiddenRing=12, lightPattern=14, matchbox=18
+	cmp	eax, 32
+	jae	.no_random_offset
+	mov	edx, (1 shl 10) or (1 shl 11) or (1 shl 12) or (1 shl 14) or (1 shl 18)
+	bt	edx, eax
+	jnc	.no_random_offset
+	mov	eax, [rcx+420h]	; KrakenId
+	add	eax, ebx
+@@:
+	imul	eax, 196314165
+	add	eax, 907633515
+	cvtsi2ss xmm0, eax
+	unpcklps xmm1, xmm0 ; xmm1 = ? rnd1 ? ?
+	mulss	xmm0, xmm0
+	imul	eax, 196314165
+	add	eax, 907633515
+	cvtsi2ss xmm2, eax
+	unpcklps xmm1, xmm2 ; xmm1 = ? rnd2 rnd1 ?
+	mulss	xmm2, xmm2
+	addss	xmm0, xmm2
+	imul	eax, 196314165
+	add	eax, 907633515
+	cvtsi2ss xmm2, eax
+	movss	xmm1, xmm2 ; xmm1 = rnd3 rnd2 rnd1 ?
+	mulss	xmm2, xmm2
+	addss	xmm0, xmm2
+	comiss	xmm0, [_2pow62]
+	jae	@b
+	mulps	xmm1, xword [hide_radius]
+	addps	xmm7, xmm1
+.no_random_offset:
+; compare the distance to the player with current best
+	movaps	xmm10, xmm7
+	subps	xmm7, xmm8
+	mulps	xmm7, xmm7
+	movaps	xmm0, xmm7
+	movaps	xmm1, xmm7
+	shufps	xmm0, xmm0, 55h
+	shufps	xmm1, xmm1, 0AAh
+	addss	xmm7, xmm0
+	addss	xmm7, xmm1
+	comiss	xmm6, xmm7
+	jbe	.skip
+; check whether this is solved
+	mov	rax, [rcx]
+	call	qword [rax+730h]
+	mov	rcx, [rsi+rdi*8]
+	test	al, al
+	jnz	.skip
+; seems good, update our best candidate
+	mov	r15, rcx
+	movss	xmm6, xmm7
+	movaps	xmm9, xmm10
+.skip:
+	inc	ebx
+	cmp	byte [rcx+254h], 18
+	jnz	.findnearest
+	cmp	ebx, 2
+	jb	.retry_if_matchbox
+	jmp	.findnearest
+.oknearest:
+	test	r15, r15
+	jz	.done
+; we have got our puzzle, now fill the marker
+	lea	rcx, [rsp+30h]
+	mov	ebx, [rcx+8]
+	lea	eax, [rbx+1]
+	mov	[rcx+8], eax
+	cmp	eax, [rcx+0Ch]
+	jbe	@f
+	mov	edx, ebx
+	call	[tarray216_resize_grow]
+@@:
+	imul	edi, ebx, 0xD8
+	add	rdi, [rsp+30h]
+	mov	rcx, rdi
+	call	[FLocationMarkerData_constructor]
+	movups	[rdi], xmm9
+	mov	dword [rdi+0Ch], 1 ; VisibleOnScreen = true, VisibleOnMap = showEverywhere = ShowOverFog = false
+	mov	rax, [r15+2C0h]
+	mov	[rdi+20h], rax ; worldTex
+	mov	rax, [r15+2C8h]
+	mov	[rdi+28h], rax ; mapTex
+.done:
+	movaps	xmm7, [rbp]
+	movaps	xmm8, [rbp+10h]
+	movaps	xmm9, [rbp+20h]
+	movaps	xmm10, [rbp+30h]
+	mov	rax, [rsp+30h]
+	mov	rcx, [rbp+1D8h]
+	mov	[rcx], rax
+	jmp	[additionalmarkers_continue]
+.end:
+
 section '.rdata' data readable
+; 100.0 to convert meters -> UE units, 2**-31 to deal with our random method
+hide_radius_multiplier	dd	0x33480000, 0x33480000, 0x33480000, 0
+
 data import
 library kernel32, 'KERNEL32.DLL', user32, 'USER32.DLL'
 include 'api/kernel32.inc'
@@ -654,6 +909,7 @@ data 3  ; IMAGE_DIRECTORY_ENTRY_EXCEPTION
 	dd	rva make_backup, rva make_backup.end, rva make_backup_unwind
 	dd	rva make_writable, rva make_writable.end, rva make_writable_unwind
 	dd	rva restore_protection, rva restore_protection.end, rva make_writable_unwind ; the prologues are identical
+	dd	rva additional_markers, rva additional_markers.end, rva additional_markers_unwind
 end data
 
 CreateDXGIFactory_unwind:
@@ -693,6 +949,34 @@ make_writable_unwind: ; also used for restore_protection
 if .size mod 4
 	dw	0
 end if
+additional_markers_unwind:
+	db	1, additional_markers.prolog_size, additional_markers_unwind.size / 2, 0
+.start:
+	db	additional_markers.prolog_offs4, 8 + 10 * 10h	; UWOP_SAVE_XMM128 for xmm10
+	dw	0x13	; saved to [rsp+130h]
+	db	additional_markers.prolog_offs3, 8 + 9 * 10h	; UWOP_SAVE_XMM128 for xmm9
+	dw	0x12	; saved to [rsp+120h]
+	db	additional_markers.prolog_offs2, 8 + 8 * 10h	; UWOP_SAVE_XMM128 for xmm8
+	dw	0x11	; saved to [rsp+110h]
+	db	additional_markers.prolog_offs1, 8 + 7 * 10h	; UWOP_SAVE_XMM128 for xmm7
+	dw	0x10	; saved to [rsp+100h]
+; we inherit these from the main code
+	db	0, 8 + 6 * 10h	; UWOP_SAVE_XMM128 for xmm6
+	dw	27h	; saved to [rsp+270h]
+	db	0, 1	; UWOP_ALLOC_LARGE
+	dw	51h
+	db	0, 0F0h	; UWOP_PUSH_NONVOL r15
+	db	0, 0E0h	; UWOP_PUSH_NONVOL r14
+	db	0, 0D0h	; UWOP_PUSH_NONVOL r13
+	db	0, 0C0h	; UWOP_PUSH_NONVOL r12
+	db	0, 70h	; UWOP_PUSH_NONVOL rdi
+	db	0, 60h	; UWOP_PUSH_NONVOL rsi
+	db	0, 30h	; UWOP_PUSH_NONVOL rbx
+	db	0, 50h	; UWOP_PUSH_NONVOL rbp
+.size = $ - .start
+if .size mod 4
+	dw	0
+end if
 
 align 4
 fixups_start = $
@@ -701,6 +985,8 @@ if $ = fixups_start
 	dd	0, 8	; fake entry
 end if
 end data
+
+_2pow62	dd	0x5E800000
 
 patch_failed_text:
 	db	'Some patches have not been applied. Probably the executable has been updated and you need to get a new version of the patch.', 0
@@ -724,14 +1010,20 @@ strChargeJumpRechargeDelay	du	'ChargeJumpRechargeDelay', 0
 strFixQuestRewards	du	'FixQuestRewards', 0
 strDisableWandererQuests	du	'DisableWandererQuests', 0
 strHighQualitySightSeerCapture	du	'HighQualitySightSeerCapture', 0
+strShowNearestUnsolved	du	'ShowNearestUnsolved', 0
+strHiddenPuzzlesMarkerMaxDistance	du	'HiddenPuzzlesMarkerMaxDistance', 0
 
 section '.data' data readable writable
+hide_radius	rq	4
 original	rq	3
 savegametoslot	dq	?
 fstring_add	dq	?
 fmemory_free	dq	?
 getsavegamepath	dq	?
 projectsaveddir	dq	?
+additionalmarkers_continue	dq	?
+tarray216_resize_grow	dq	?
+FLocationMarkerData_constructor	dq	?
 max_backups	dd	?
 backup_made	db	?
 use_temporary_file db	?
