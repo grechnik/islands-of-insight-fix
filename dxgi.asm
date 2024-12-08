@@ -872,7 +872,9 @@ find_nearest_unsolved:
 @@:
 	imul	eax, 196314165
 	add	eax, 907633515
-	cvtsi2ss xmm0, eax
+	mov	edx, eax
+	sar	edx, 1	; make Z shift be from [-0.5, 0.5]
+	cvtsi2ss xmm0, edx
 	unpcklps xmm1, xmm0 ; xmm1 = ? rnd1 ? ?
 	mulss	xmm0, xmm0
 	imul	eax, 196314165
