@@ -62,11 +62,17 @@ putmarker_expected2 = 0x565508244C894810
 sophiagameinstance_loadversion_offset = 0x12B119F
 sophiagameinstance_loadversion_expected = 0xE8000006C08F8D48
 
+; SHA1 calculator
+sha1_hashbuffer_offset = 0x16F56F0
+sha1_hashbuffer_expected = 0x2444C7C033C28B4C
+
 section '.text' code readable executable
 
 CreateDXGIFactory:
 virtual at 0
-	rb	30h	; shadow space for callees and two stack args
+	rb	20h	; shadow space for callees
+.very_temporary	rq	3	; stack args for callees
+.full_pak_name	rq	2
 .saved_rcx	dq	?
 .saved_rdx	dq	?
 .saved_r8	dq	?
@@ -432,32 +438,154 @@ end virtual
 	mov	dword [rsp+20h], 256-3
 	mov	[rsp+28h], rbx
 	call	[GetPrivateProfileStringW]
+	lea	rcx, [strMod]
+	lea	rdx, [strPakFileHash]
+	xor	r8d, r8d
+	lea	r9, [pakFileHash]
+	mov	dword [rsp+20h], 41
+	mov	[rsp+28h], rbx
+	call	[GetPrivateProfileStringW]
 	test	eax, eax
-	jz	.skip_version_patch
+	jnz	@f
+	cmp	word [modVersion+6], 0
+	jz	.skip_mod_section
+@@:
 	mov	cl, 1
 	mov	rax, sophiagameinstance_loadversion_expected
 	cmp	qword [rdi], rax
-	jnz	.done_version_patch
+	jnz	.done_mod_section
 	mov	eax, [rdi-44h]
 	add	eax, sophiagameinstance_loadversion_offset - 40h + 28h
 	cmp	eax, expected_image_size
-	jae	.done_version_patch
+	jae	.done_mod_section
 	mov	rdx, 0x0073007200650076	; 'vers'
 	cmp	qword [rdi-sophiagameinstance_loadversion_offset+rax-8], rdx
-	jnz	.done_version_patch
-	movsxd	rax, [rdi+8]
+	jnz	.done_mod_section
+	movsxd	rax, dword [rdi+8]
 	lea	rax, [rax+rdi+12]
 	mov	[loadfiletostring], rax
+	movsxd	rax, dword [rdi-30h]
+	lea	rax, [rax+rdi-2Ch]
+	mov	[FPaths_ProjectContentDir], rax
+	cmp	word [modVersion+6], 0
+	jz	.skip_version_patch
 	call	make_writable
 	mov	word [rdi], 0xB848
 	lea	rax, [hook_loadversion]
 	mov	[rdi+2], rax
 	mov	word [rdi+10], 0xD0FF ; call rax
 	call	restore_protection
-	mov	cl, 0
-.done_version_patch:
-	or	[rbx + .patch_failed - .orig_dll_name], cl
 .skip_version_patch:
+	cmp	word [pakFileHash], 0
+	jz	.skip_mod_section
+	cmp	[rbx + .patch_failed - .orig_dll_name], 0
+	jnz	.skip_mod_section
+	lea	rcx, [rbx + .very_temporary - .orig_dll_name]
+	call	[FPaths_ProjectContentDir]
+	lea	rcx, [rbx + .full_pak_name - .orig_dll_name]
+	lea	rdx, [rbx + .very_temporary - .orig_dll_name]
+	lea	r8, [pak_file_name]
+	call	[fstring_add]
+	mov	rcx, [rbx + .very_temporary - .orig_dll_name]
+	call	[fmemory_free]
+	mov	rcx, [rbx + .full_pak_name - .orig_dll_name]
+	mov	edx, GENERIC_READ
+	xor	r9d, r9d
+	lea	r8d, [r9+FILE_SHARE_READ+FILE_SHARE_WRITE+FILE_SHARE_DELETE]
+	mov	dword [rbx + .very_temporary - .orig_dll_name], OPEN_EXISTING
+	mov	dword [rbx + .very_temporary + 8 - .orig_dll_name], r9d
+	mov	qword [rbx + .very_temporary + 10h - .orig_dll_name], r9
+	call	[CreateFileW]
+	mov	qword [rbx + .very_temporary + 10h - .orig_dll_name], rax
+	mov	rcx, [rbx + .full_pak_name - .orig_dll_name]
+	call	[fmemory_free]
+	lea	rdx, [no_pak_file_text]
+	mov	rcx, [rbx + .very_temporary + 10h - .orig_dll_name]
+	cmp	rcx, INVALID_HANDLE_VALUE
+	jz	.bad_pak_messagebox
+	xor	edx, edx
+	call	[GetFileSize]
+	mov	dword [rbx + .full_pak_name - .orig_dll_name], eax
+	mov	rcx, [rbx + .very_temporary + 10h - .orig_dll_name]
+	xor	edx, edx
+	lea	r8d, [rdx + PAGE_READONLY]
+	xor	r9d, r9d
+	mov	dword [rbx + .very_temporary - .orig_dll_name], eax
+	mov	qword [rbx + .very_temporary + 8 - .orig_dll_name], rdx
+	call	[CreateFileMappingW]
+	mov	rcx, qword [rbx + .very_temporary + 10h - .orig_dll_name]
+	mov	qword [rbx + .very_temporary + 10h - .orig_dll_name], rax
+	call	[CloseHandle]
+	lea	rdx, [error_pak_file_text]
+	mov	rcx, qword [rbx + .very_temporary + 10h - .orig_dll_name]
+	test	rcx, rcx
+	jz	.bad_pak_messagebox
+	xor	r8d, r8d
+	xor	r9d, r9d
+	lea	rdx, [r8 + FILE_MAP_READ]
+	mov	eax, dword [rbx + .full_pak_name - .orig_dll_name]
+	mov	qword [rbx + .very_temporary - .orig_dll_name], rax
+	call	[MapViewOfFile]
+	mov	rcx, qword [rbx + .very_temporary + 10h - .orig_dll_name]
+	mov	qword [rbx + .full_pak_name + 8 - .orig_dll_name], rax
+	call	[CloseHandle]
+	lea	edx, [error_pak_file_text]
+	mov	rcx, qword [rbx + .full_pak_name + 8 - .orig_dll_name]
+	test	rcx, rcx
+	jz	.bad_pak_messagebox
+	lea	rax, [rdi + sha1_hashbuffer_offset - sophiagameinstance_loadversion_offset]
+	mov	rdx, sha1_hashbuffer_expected
+	cmp	[rax+28h], rdx
+	jz	@f
+	mov	[rbx + .patch_failed - .orig_dll_name], 1
+	mov	byte [rbx + .tmp2 - .orig_dll_name], 0
+	jmp	.pak_checked
+@@:
+	mov	edx, dword [rbx + .full_pak_name - .orig_dll_name]
+	lea	r8, [rbx + .very_temporary - .orig_dll_name]
+	call	rax
+	lea	rdx, [pakFileHash]
+	xor	ecx, ecx
+.hashloop:
+	mov	al, [rdx + 4*rcx]
+	or	al, 20h
+	sub	al, '0'
+	cmp	al, 9
+	jbe	@f
+	sub	al, 'a' - '0' - 10
+@@:
+	mov	ah, [rdx + 4*rcx + 2]
+	or	ah, 20h
+	sub	ah, '0'
+	cmp	ah, 9
+	jbe	@f
+	sub	ah, 'a' - '0' - 10
+@@:
+	shl	al, 4
+	or	al, ah
+	cmp	byte [rbx + .very_temporary - .orig_dll_name + rcx], al
+	jnz	.badhash
+	inc	ecx
+	cmp	ecx, 20
+	jnz	.hashloop
+.badhash:
+	setnz	byte [rbx + .tmp2 - .orig_dll_name]
+.pak_checked:
+	mov	rcx, qword [rbx + .full_pak_name + 8 - .orig_dll_name]
+	call	[UnmapViewOfFile]
+	cmp	byte [rbx + .tmp2 - .orig_dll_name], 0
+	jz	.pak_ok
+	lea	rdx, [mismatch_pak_file_text]
+.bad_pak_messagebox:
+	xor	ecx, ecx
+	lea	r8, [bad_pak_caption]
+	lea	r9, [rcx+MB_OK+MB_ICONSTOP]
+	call	[MessageBoxA]
+.pak_ok:
+	mov	cl, 0
+.done_mod_section:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
+.skip_mod_section:
 	cmp	[rbx + .patch_failed - .orig_dll_name], 0
 	jz	.done
 .nag:
@@ -1233,12 +1361,22 @@ patch_failed_text:
 patch_failed_caption:
 	db	'Patch error',0
 
+bad_pak_caption:
+	db	'Bad .pak file',0
+no_pak_file_text:
+	db	"The .dll part of the mod is installed correctly, but the .pak part is missing. You'll miss many important fixes",0
+error_pak_file_text:
+	db	"Something went wrong while validating .pak part of the mod", 0
+mismatch_pak_file_text:
+	db	"The .pak part of the mod is not what it should be. Maybe you've installed only part of an update. Maybe the data got corrupted", 0
+
 align 2
 str_tmp	du	'.tmp',0
 str_OfflineSavegame	du	'OfflineSavegame',0
 backup_filename_formatstring	du	'%sOfflineSavegame_%04d-%02d-%02d_%02d%02d%02d.sav',0
 savebackups_path	du	'SaveBackups/',0
 savebackups_mask	du	'*.sav',0
+pak_file_name	du	'Paks/RRMOD_PuzzleFix.pak',0
 
 ; ini file sections and keys
 strSaves	du	'Saves', 0
@@ -1255,6 +1393,7 @@ strEmoteMarksNearestUnsolved	du	'EmoteMarksNearestUnsolved', 0
 strHiddenPuzzlesMarkerMaxDistance	du	'HiddenPuzzlesMarkerMaxDistance', 0
 strMod		du	'Mod', 0
 strVersion	du	'Version', 0
+strPakFileHash	du	'PakFileHash', 0
 
 section '.data' data readable writable
 hide_radius	rq	4
@@ -1271,6 +1410,7 @@ FLocationMarkerData_constructor	dq	?
 putmarker_continue	dq	?
 current_marker_puzzle	dq	?
 loadfiletostring	dq	?
+FPaths_ProjectContentDir	dq	?
 max_backups	dd	?
 backup_made	db	?
 use_temporary_file db	?
@@ -1278,3 +1418,4 @@ show_nearest_unsolved	db	?
 current_active_marker_type	db	?
 align 2
 modVersion	rw	256
+pakFileHash	rw	41
