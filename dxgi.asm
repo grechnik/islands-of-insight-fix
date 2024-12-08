@@ -216,7 +216,6 @@ end virtual
 	mov	[max_backups], eax
 	test	eax, eax
 	jg	@f
-	inc	[backup_made]
 	cmp	[use_temporary_file], 0
 	jz	.skip_savegame_patch
 @@:
@@ -668,14 +667,27 @@ restore_protection:
 
 save_game_patched:
 	mov	[rsp+20h], rax ; save useful data
+	cmp	[max_backups], 0
+	jle	.no_backup
+	call	[GetTickCount]
+	mov	edx, eax
 	cmp	[backup_made], 0
 	jnz	@f
 	inc	[backup_made]
+	jmp	.do_backup
+@@:
+	sub	eax, [last_backup_time]
+	cmp	eax, 60 * 60 * 1000
+	jb	.no_backup
+.do_backup:
+	mov	[last_backup_time], edx
 	mov	rdx, [projectsaveddir]
 	test	rdx, rdx
 	jz	@f
 	call	make_backup
-@@:
+	call	[GetTickCount]
+	mov	[last_backup_time], eax
+.no_backup:
 	lea	rcx, [rsp+30h]
 	mov	rax, [rcx-10h]
 	cmp	[use_temporary_file], 0
@@ -1412,6 +1424,7 @@ current_marker_puzzle	dq	?
 loadfiletostring	dq	?
 FPaths_ProjectContentDir	dq	?
 max_backups	dd	?
+last_backup_time	dd	?
 backup_made	db	?
 use_temporary_file db	?
 show_nearest_unsolved	db	?
