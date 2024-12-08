@@ -58,11 +58,15 @@ putmarker_offset = 0x1358FE0
 putmarker_expected1 = 0x24548820245C8948
 putmarker_expected2 = 0x565508244C894810
 
+; hook reading of ASophia/BuildId/version.txt at Esc screen to add mod version
+sophiagameinstance_loadversion_offset = 0x12B119F
+sophiagameinstance_loadversion_expected = 0xE8000006C08F8D48
+
 section '.text' code readable executable
 
 CreateDXGIFactory:
 virtual at 0
-	rb	20h	; shadow space for callees
+	rb	30h	; shadow space for callees and two stack args
 .saved_rcx	dq	?
 .saved_rdx	dq	?
 .saved_r8	dq	?
@@ -418,6 +422,42 @@ end virtual
 .done_shownearest_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
 .skip_shownearest_patch:
+	add	rdi, sophiagameinstance_loadversion_offset - collectmarkers_exit_offset
+	lea	rcx, [strMod]
+	lea	rdx, [strVersion]
+	xor	r8d, r8d
+	lea	r9, [modVersion+6]
+	mov	dword [r9-6], ' ' + ('|' shl 16)
+	mov	word [r9-2], ' '
+	mov	dword [rsp+20h], 256-3
+	mov	[rsp+28h], rbx
+	call	[GetPrivateProfileStringW]
+	test	eax, eax
+	jz	.skip_version_patch
+	mov	cl, 1
+	mov	rax, sophiagameinstance_loadversion_expected
+	cmp	qword [rdi], rax
+	jnz	.done_version_patch
+	mov	eax, [rdi-44h]
+	add	eax, sophiagameinstance_loadversion_offset - 40h + 28h
+	cmp	eax, expected_image_size
+	jae	.done_version_patch
+	mov	rdx, 0x0073007200650076	; 'vers'
+	cmp	qword [rdi-sophiagameinstance_loadversion_offset+rax-8], rdx
+	jnz	.done_version_patch
+	movsxd	rax, [rdi+8]
+	lea	rax, [rax+rdi+12]
+	mov	[loadfiletostring], rax
+	call	make_writable
+	mov	word [rdi], 0xB848
+	lea	rax, [hook_loadversion]
+	mov	[rdi+2], rax
+	mov	word [rdi+10], 0xD0FF ; call rax
+	call	restore_protection
+	mov	cl, 0
+.done_version_patch:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
+.skip_version_patch:
 	cmp	[rbx + .patch_failed - .orig_dll_name], 0
 	jz	.done
 .nag:
@@ -1046,6 +1086,20 @@ hook_putmarker:
 	ret
 .end:
 
+hook_loadversion:
+	sub	rsp, 28h
+	lea	rcx, [rsp+30h]
+	call	[loadfiletostring]
+	lea	rcx, [rdi+6C0h]
+	lea	rdx, [rsp+30h]
+	lea	r8, [modVersion]
+	call	[fstring_add]
+	mov	rcx, [rsp+30h]
+	call	[fmemory_free]
+	add	rsp, 28h
+	ret
+.end:
+
 section '.rdata' data readable
 ; 100.0 to convert meters -> UE units, 2**-31 to deal with our random method
 hide_radius_multiplier	dd	0x33480000, 0x33480000, 0x33480000, 0
@@ -1075,10 +1129,11 @@ data 3  ; IMAGE_DIRECTORY_ENTRY_EXCEPTION
 	dd	rva save_game_patched, rva save_game_patched.end, rva save_game_patched_unwind
 	dd	rva make_backup, rva make_backup.end, rva make_backup_unwind
 	dd	rva make_writable, rva make_writable.end, rva make_writable_unwind
-	dd	rva restore_protection, rva restore_protection.end, rva make_writable_unwind ; the prologues are identical
+	dd	rva restore_protection, rva restore_protection.end, rva make_writable_unwind
 	dd	rva find_nearest_unsolved, rva find_nearest_unsolved.end, rva find_nearest_unsolved_unwind
 	dd	rva additional_markers, rva additional_markers.end, rva additional_markers_unwind
-	dd	rva hook_putmarker.start_stack_use, rva hook_putmarker.end, rva hook_putmarker_unwind
+	dd	rva hook_putmarker.start_stack_use, rva hook_putmarker.end, rva make_writable_unwind
+	dd	rva hook_loadversion, rva hook_loadversion.end, rva make_writable_unwind
 end data
 
 CreateDXGIFactory_unwind:
@@ -1162,14 +1217,6 @@ additional_markers_unwind:
 if .size mod 4
 	dw	0
 end if
-hook_putmarker_unwind:
-	db	1, hook_putmarker.prolog_size, hook_putmarker_unwind.size / 2, 0
-.start:
-	db	hook_putmarker.prolog_offs1, 2 + ((28h - 8) / 8) * 10h ; UWOP_ALLOC_SMALL for 78h bytes
-.size = $ - .start
-if .size mod 4
-	dw	0
-end if
 
 align 4
 fixups_start = $
@@ -1206,6 +1253,8 @@ strHighQualitySightSeerCapture	du	'HighQualitySightSeerCapture', 0
 strShowNearestUnsolved	du	'ShowNearestUnsolved', 0
 strEmoteMarksNearestUnsolved	du	'EmoteMarksNearestUnsolved', 0
 strHiddenPuzzlesMarkerMaxDistance	du	'HiddenPuzzlesMarkerMaxDistance', 0
+strMod		du	'Mod', 0
+strVersion	du	'Version', 0
 
 section '.data' data readable writable
 hide_radius	rq	4
@@ -1221,8 +1270,11 @@ tarray216_resize_grow	dq	?
 FLocationMarkerData_constructor	dq	?
 putmarker_continue	dq	?
 current_marker_puzzle	dq	?
+loadfiletostring	dq	?
 max_backups	dd	?
 backup_made	db	?
 use_temporary_file db	?
 show_nearest_unsolved	db	?
 current_active_marker_type	db	?
+align 2
+modVersion	rw	256
