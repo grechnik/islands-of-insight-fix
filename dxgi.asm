@@ -66,6 +66,10 @@ sophiagameinstance_loadversion_expected = 0xE8000006C08F8D48
 sha1_hashbuffer_offset = 0x16F56F0
 sha1_hashbuffer_expected = 0x2444C7C033C28B4C
 
+; make initialization of UPuzzleDatabase robust to repeated calls
+puzzledatabase_init_offset = 0x14CFCD2
+puzzledatabase_init_expected = 0x244489B04589C78B
+
 section '.text' code readable executable
 
 CreateDXGIFactory:
@@ -585,6 +589,22 @@ end virtual
 .done_mod_section:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
 .skip_mod_section:
+	add	rdi, puzzledatabase_init_offset - sophiagameinstance_loadversion_offset
+	mov	rax, puzzledatabase_init_expected
+	mov	cl, 1
+	cmp	[rdi], rax
+	jnz	.done_puzzledatabase_patch
+	lea	rax, [rdi+10h]
+	mov	[puzzledatabase_init_continue], rax
+	call	make_writable
+	mov	word [rdi], 0xB848
+	lea	rax, [hook_puzzledatabase_init]
+	mov	qword [rdi+2], rax
+	mov	word [rdi+10], 0xE0FF
+	call	restore_protection
+	mov	cl, 0
+.done_puzzledatabase_patch:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
 	cmp	[rbx + .patch_failed - .orig_dll_name], 0
 	jz	.done
 .nag:
@@ -685,8 +705,6 @@ save_game_patched:
 	test	rdx, rdx
 	jz	@f
 	call	make_backup
-	call	[GetTickCount]
-	mov	[last_backup_time], eax
 .no_backup:
 	lea	rcx, [rsp+30h]
 	mov	rax, [rcx-10h]
@@ -1240,6 +1258,49 @@ hook_loadversion:
 	ret
 .end:
 
+hook_puzzledatabase_init:
+; reset all entries of TMap<EMainMapZoneName, TMap<FString, int>> this+468h with zeroes
+	add	rcx, 468h
+	xor	eax, eax
+.map1_loop:
+	cmp	eax, [rcx+28h]
+	jae	.map1_done
+	mov	rdx, [rcx+20h]
+	test	rdx, rdx
+	jnz	@f
+	lea	rdx, [rcx+10h]
+@@:
+	bt	[rdx], eax
+	jnc	.map1_continue
+	imul	ebx, eax, 60h
+	add	rbx, [rcx]
+	xor	esi, esi
+.map2_loop:
+	cmp	esi, [rbx+8+28h]
+	jae	.map1_continue
+	mov	rdx, [rbx+8+20h]
+	test	rdx, rdx
+	jnz	@f
+	lea	rdx, [rbx+8+10h]
+@@:
+	bt	[rdx], esi
+	jnc	.map2_continue
+	mov	edx, esi
+	shl	edx, 5
+	add	rdx, [rbx+8]
+	mov	[rdx+10h], edi
+.map2_continue:
+	inc	esi
+	jmp	.map2_loop
+.map1_continue:
+	inc	eax
+	jmp	.map1_loop
+.map1_done:
+	mov	[rbp-50h], edi
+	mov	[rsp+70h], edi
+	add	rcx, 320h - 468h
+	jmp	[puzzledatabase_init_continue]
+
 section '.rdata' data readable
 ; 100.0 to convert meters -> UE units, 2**-31 to deal with our random method
 hide_radius_multiplier	dd	0x33480000, 0x33480000, 0x33480000, 0
@@ -1408,8 +1469,8 @@ strVersion	du	'Version', 0
 strPakFileHash	du	'PakFileHash', 0
 
 section '.data' data readable writable
-hide_radius	rq	4
-current_marker_pos	rq	4
+hide_radius	rd	4
+current_marker_pos	rd	4
 original	rq	3
 savegametoslot	dq	?
 fstring_add	dq	?
@@ -1423,6 +1484,7 @@ putmarker_continue	dq	?
 current_marker_puzzle	dq	?
 loadfiletostring	dq	?
 FPaths_ProjectContentDir	dq	?
+puzzledatabase_init_continue	dq	?
 max_backups	dd	?
 last_backup_time	dd	?
 backup_made	db	?
