@@ -70,6 +70,10 @@ sha1_hashbuffer_expected = 0x2444C7C033C28B4C
 puzzledatabase_init_offset = 0x14CFCD2
 puzzledatabase_init_expected = 0x244489B04589C78B
 
+; ignore subsequent presses of "Offline mode" button that cause several calls of UGISKraken::Init
+giskraken_init_offset = 0x124AEF0
+giskraken_init_expected = 0x74894808245C8948
+
 section '.text' code readable executable
 
 CreateDXGIFactory:
@@ -206,6 +210,8 @@ end virtual
 	add	rdi, save_game_offset - is_solved_offset
 	cmp	[rbx + .patch_failed - .orig_dll_name], 0
 	jnz	.skip_savegame_patch
+	lea	rcx, [save_critsect]
+	call	[InitializeCriticalSection]
 	lea	rcx, [strSaves]
 	lea	rdx, [strViaTemporaryFile]
 	xor	r8d, r8d
@@ -605,6 +611,29 @@ end virtual
 	mov	cl, 0
 .done_puzzledatabase_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
+	add	rdi, giskraken_init_offset - puzzledatabase_init_offset
+	mov	rax, giskraken_init_expected
+	mov	cl, 1
+	cmp	[rdi], rax
+	jnz	.done_giskraken_patch
+	mov	eax, [rdi+15h]
+	add	eax, giskraken_init_offset + 19h + 8
+	cmp	eax, expected_image_size
+	jae	.done_giskraken_patch
+	mov	rdx, 0x004400410045004C ; "LEAD" ...ERBOARD_PAGE_SIZE
+	cmp	[rdi+rax-giskraken_init_offset-8], rdx
+	jnz	.done_giskraken_patch
+	lea	rax, [rdi+0Fh]
+	mov	[giskraken_init_continue], rax
+	call	make_writable
+	mov	word [rdi], 0xB848
+	lea	rax, [hook_giskraken_init]
+	mov	[rdi+2], rax
+	mov	word [rdi+10], 0xE0FF
+	call	restore_protection
+	mov	cl, 0
+.done_giskraken_patch:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
 	cmp	[rbx + .patch_failed - .orig_dll_name], 0
 	jz	.done
 .nag:
@@ -687,6 +716,8 @@ restore_protection:
 
 save_game_patched:
 	mov	[rsp+20h], rax ; save useful data
+	lea	rcx, [save_critsect]
+	call	[EnterCriticalSection]
 	cmp	[max_backups], 0
 	jle	.no_backup
 	call	[GetTickCount]
@@ -713,8 +744,8 @@ save_game_patched:
 	mov	rcx, [rax+40h]
 	lea	rdx, [rax+30h]
 	xor	r8d, r8d
-	add	rsp, 28h
-	jmp	[savegametoslot]
+	call	[savegametoslot]
+	jmp	.done2
 @@:
 ; "OfflineSavegame" -> "OfflineSavegame.tmp"
 	lea	rdx, [rax+30h]
@@ -757,6 +788,9 @@ save_game_patched:
 .done:
 	mov	rcx, [rsp+30h]
 	call	[fmemory_free]
+.done2:
+	lea	rcx, [save_critsect]
+	call	[LeaveCriticalSection]
 	mov	al, 1
 	add	rsp, 28h
 	ret
@@ -1300,6 +1334,23 @@ hook_puzzledatabase_init:
 	mov	[rsp+70h], edi
 	add	rcx, 320h - 468h
 	jmp	[puzzledatabase_init_continue]
+.end:
+
+hook_giskraken_init:
+	bts	dword [giskraken_init_called], 0
+	jnc	@f
+	ret
+@@:
+	mov	[rsp+8], rbx
+	mov	[rsp+20h], rsi
+.start_stack_use:
+	push	rdi
+.prolog_offs1 = $ - .start_stack_use
+	sub	rsp, 60h
+.prolog_offs2 = $ - .start_stack_use
+.prolog_size = $ - .start_stack_use
+	jmp	[giskraken_init_continue]
+.end:
 
 section '.rdata' data readable
 ; 100.0 to convert meters -> UE units, 2**-31 to deal with our random method
@@ -1335,6 +1386,8 @@ data 3  ; IMAGE_DIRECTORY_ENTRY_EXCEPTION
 	dd	rva additional_markers, rva additional_markers.end, rva additional_markers_unwind
 	dd	rva hook_putmarker.start_stack_use, rva hook_putmarker.end, rva make_writable_unwind
 	dd	rva hook_loadversion, rva hook_loadversion.end, rva make_writable_unwind
+	dd	rva hook_puzzledatabase_init, rva hook_puzzledatabase_init.end, rva hook_puzzledatabase_init_unwind
+	dd	rva hook_giskraken_init.start_stack_use, rva hook_giskraken_init.end, rva hook_giskraken_init_unwind
 end data
 
 CreateDXGIFactory_unwind:
@@ -1418,6 +1471,36 @@ additional_markers_unwind:
 if .size mod 4
 	dw	0
 end if
+hook_puzzledatabase_init_unwind:
+	db	1, 0, hook_puzzledatabase_init_unwind.size / 2, 0
+.start:
+; we don't manipulate the stack ourselves, but inherit these from the main code
+	db	0, 4 + 7*10h	; UWOP_SAVE_NONVOL rdi
+	dw	53h
+	db	0, 4 + 6*10h	; UWOP_SAVE_NONVOL rsi
+	dw	52h
+	db	0, 4 + 3*10h	; UWOP_SAVE_NONVOL rbx
+	dw	51h
+	db	0, 1	; UWOP_ALLOC_LARGE
+	dw	4Ah
+	db	0, 0F0h	; UWOP_PUSH_NONVOL r15
+	db	0, 0E0h	; UWOP_PUSH_NONVOL r14
+	db	0, 0D0h	; UWOP_PUSH_NONVOL r13
+	db	0, 0C0h	; UWOP_PUSH_NONVOL r12
+	db	0, 50h	; UWOP_PUSH_NONVOL rbp
+.size = $ - .start
+if .size mod 4
+	dw	0
+end if
+hook_giskraken_init_unwind:
+	db	1, hook_giskraken_init.prolog_size, hook_giskraken_init_unwind.size / 2, 0
+.start:
+	db	hook_giskraken_init.prolog_offs2, 2 + ((60h - 8) / 8) * 10h	; UWOP_ALLOC_SMALL for 60h bytes
+	db	hook_giskraken_init.prolog_offs1, 70h	; UWOP_PUSH_NONVOL rdi
+.size = $ - .start
+if .size mod 4
+	dw	0
+end if
 
 align 4
 fixups_start = $
@@ -1472,6 +1555,7 @@ section '.data' data readable writable
 hide_radius	rd	4
 current_marker_pos	rd	4
 original	rq	3
+save_critsect	rq	5
 savegametoslot	dq	?
 fstring_add	dq	?
 fmemory_free	dq	?
@@ -1485,12 +1569,14 @@ current_marker_puzzle	dq	?
 loadfiletostring	dq	?
 FPaths_ProjectContentDir	dq	?
 puzzledatabase_init_continue	dq	?
+giskraken_init_continue	dq	?
 max_backups	dd	?
 last_backup_time	dd	?
 backup_made	db	?
 use_temporary_file db	?
 show_nearest_unsolved	db	?
 current_active_marker_type	db	?
+giskraken_init_called	db	?
 align 2
 modVersion	rw	256
 pakFileHash	rw	41
