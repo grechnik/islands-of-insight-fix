@@ -1518,13 +1518,13 @@ patch_failed_caption:
 	db	'Patch error',0
 
 bad_pak_caption:
-	db	'Bad .pak file',0
+	db	'Offline Restored Mod: bad .pak file',0
 no_pak_file_text:
 	db	"The .dll part of the mod is installed correctly, but the .pak part is missing. You'll miss many important fixes",0
 error_pak_file_text:
 	db	"Something went wrong while validating .pak part of the mod", 0
 mismatch_pak_file_text:
-	db	"The .pak part of the mod is not what it should be. Maybe you've installed only part of an update. Maybe the data got corrupted", 0
+	db	"Please re-download and re-install the latest version of Offline Restored Mod", 0
 
 align 2
 str_tmp	du	'.tmp',0
