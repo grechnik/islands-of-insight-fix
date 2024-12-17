@@ -229,6 +229,13 @@ end virtual
 	cmp	[use_temporary_file], 0
 	jz	.skip_savegame_patch
 @@:
+	lea	rcx, [strSaves]
+	lea	rdx, [strBackupPeriod]
+	xor	r8d, r8d
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	imul	eax, 1000
+	mov	[backup_period], eax
 	lea	rax, [rdi - save_game_offset + projectsaveddir_offset]
 	mov	rdx, 0x000109B880F88B48
 	cmp	[rax+0Bh], rdx
@@ -727,9 +734,11 @@ save_game_patched:
 	inc	[backup_made]
 	jmp	.do_backup
 @@:
+	mov	ecx, [backup_period]
 	sub	eax, [last_backup_time]
-	cmp	eax, 60 * 60 * 1000
+	cmp	eax, ecx
 	jb	.no_backup
+	jecxz	.no_backup
 .do_backup:
 	mov	[last_backup_time], edx
 	mov	rdx, [projectsaveddir]
@@ -1546,6 +1555,7 @@ pak_file_name	du	'Paks/RRMOD_PuzzleFix.pak',0
 strSaves	du	'Saves', 0
 strViaTemporaryFile	du	'ViaTemporaryFile', 0
 strMaxBackups	du	'MaxBackups', 0
+strBackupPeriod	du	'BackupPeriod', 0
 strGameplay	du	'Gameplay', 0
 strSolvedStaySolved	du	'SolvedStaySolved', 0
 strChargeJumpRechargeDelay	du	'ChargeJumpRechargeDelay', 0
@@ -1579,6 +1589,7 @@ FPaths_ProjectContentDir	dq	?
 puzzledatabase_init_continue	dq	?
 giskraken_init_continue	dq	?
 max_backups	dd	?
+backup_period	dd	?
 last_backup_time	dd	?
 backup_made	db	?
 use_temporary_file db	?
