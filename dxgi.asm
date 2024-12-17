@@ -465,9 +465,11 @@ end virtual
 	lea	rdx, [strVersion]
 	xor	r8d, r8d
 	lea	r9, [modVersion]
-	mov	dword [rsp+20h], 256
+	mov	dword [rsp+20h], 256-1
 	mov	[rsp+28h], rbx
 	call	[GetPrivateProfileStringW]
+	lea	rcx, [modVersion]
+	mov	dword [rcx+rax*2], 0x0A
 	lea	rcx, [strMod]
 	lea	rdx, [strPakFileHash]
 	xor	r8d, r8d
@@ -477,7 +479,7 @@ end virtual
 	call	[GetPrivateProfileStringW]
 	test	eax, eax
 	jnz	@f
-	cmp	word [modVersion], 0
+	cmp	word [modVersion+2], 0
 	jz	.skip_mod_section
 @@:
 	mov	cl, 1
@@ -1310,12 +1312,22 @@ hook_putmarker:
 
 hook_loadversion:
 	sub	rsp, 28h
-;	lea	rcx, [rsp+30h]
-;	call	[loadfiletostring]
-	lea	rcx, [rdi+6C0h]
+	lea	rcx, [rsp+30h]
+	call	[loadfiletostring]
+	lea	rcx, [rsp+40h]
 	mov	rdx, rcx
+	and	qword [rcx], 0
+	and	qword [rcx+8], 0
 	lea	r8, [modVersion]
 	call	[fstring_add]
+	lea	rcx, [rdi+6C0h]
+	lea	rdx, [rsp+40h]
+	mov	r8, [rdx-10h]
+	call	[fstring_add]
+	mov	rcx, [rsp+30h]
+	call	[fmemory_free]
+	mov	rcx, [rsp+40h]
+	call	[fmemory_free]
 	add	rsp, 28h
 	ret
 .end:
