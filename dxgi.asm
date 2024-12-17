@@ -1123,7 +1123,7 @@ find_nearest_unsolved:
 ; for hidden archways, cubes, rings, light patterns and matchboxes add a random offset
 ; hiddenArchway=10, hiddenCube=11, hiddenRing=12, lightPattern=14, matchbox=18
 	cmp	eax, 32
-	jae	.no_random_offset
+	jae	.no_random_offset_big
 	mov	edx, (1 shl 10) or (1 shl 11) or (1 shl 12) or (1 shl 14) or (1 shl 18)
 	bt	edx, eax
 	jnc	.no_random_offset
@@ -1154,6 +1154,12 @@ find_nearest_unsolved:
 	mulps	xmm1, xword [hide_radius]
 	addps	xmm7, xmm1
 .no_random_offset:
+	mov	edx, (1 shl 0) or (1 shl 3) or (1 shl 19) or (1 shl 21)
+	bt	edx, eax
+	jnc	@f
+	addps	xmm7, xword [logic_grid_and_like_offset]
+@@:
+.no_random_offset_big:
 ; compare the distance to the player with current best
 	movaps	xmm10, xmm7
 	subps	xmm7, xmm8
@@ -1395,6 +1401,7 @@ hook_giskraken_init:
 section '.rdata' data readable
 ; 100.0 to convert meters -> UE units, 2**-31 to deal with our random method
 hide_radius_multiplier	dd	0x33480000, 0x33480000, 0x33480000, 0
+logic_grid_and_like_offset	dd	0, 0, 240.0, 0
 
 data import
 library kernel32, 'KERNEL32.DLL', user32, 'USER32.DLL'
