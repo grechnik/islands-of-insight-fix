@@ -381,16 +381,32 @@ end virtual
 	call	[GetPrivateProfileIntW]
 	mov	[show_nearest_unsolved], al
 	lea	rcx, [strGameplay]
+	lea	rdx, [strShowNearestLogicGrid]
+	xor	r8d, r8d
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	mov	[show_nearest_logicgrid], al
+	lea	rcx, [strGameplay]
+	lea	rdx, [strMinLogicGridDifficulty]
+	xor	r8d, r8d
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	cmp	al, 1
+	jbe	@f
+	mov	[min_logicgrid_difficulty], al
+@@:
+	lea	rcx, [strGameplay]
 	lea	rdx, [strEmoteMarksNearestUnsolved]
 	xor	r8d, r8d
 	mov	r9, rbx
 	call	[GetPrivateProfileIntW]
 	mov	byte [rbx + .tmp2 - .orig_dll_name], al
 	or	al, [show_nearest_unsolved]
+	or	al, [show_nearest_logicgrid]
 	jz	.skip_shownearest_patch
 	lea	rcx, [strGameplay]
 	lea	rdx, [strHiddenPuzzlesMarkerMaxDistance]
-	xor	r8d, r8d
+	mov	r8d, 50
 	mov	r9, rbx
 	call	[GetPrivateProfileIntW]
 	cvtsi2ss xmm0, eax
@@ -1025,6 +1041,9 @@ find_nearest_unsolved:
 	test	al, al
 	jnz	@f
 	mov	rdx, [rcx+6A0h]
+	mov	bl, [rdx+6B8h]	; difficulty
+	cmp	bl, [min_logicgrid_difficulty]
+	jb	.findnearest
 	mov	rbx, [rdx+688h]
 	mov	edx, [rdx+690h]
 	cmp	edx, 2 ; EModifierType__CompleteThePattern
@@ -1211,10 +1230,14 @@ additional_markers:
 ; current_marker_puzzle either despawned or has been solved
 	and	[current_marker_puzzle], 0
 .no_current:
-	cmp	[show_nearest_unsolved], 0
-	jz	.done
-	mov	rcx, rbx
 	or	eax, -1
+	cmp	[show_nearest_unsolved], 0
+	jnz	@f
+	add	eax, 2
+	cmp	[show_nearest_logicgrid], 0
+	jz	.done
+@@:
+	mov	rcx, rbx
 	call	find_nearest_unsolved
 	test	rax, rax
 	jz	.done
@@ -1565,6 +1588,8 @@ strHighQualitySightSeerCapture	du	'HighQualitySightSeerCapture', 0
 strShowNearestUnsolved	du	'ShowNearestUnsolved', 0
 strEmoteMarksNearestUnsolved	du	'EmoteMarksNearestUnsolved', 0
 strHiddenPuzzlesMarkerMaxDistance	du	'HiddenPuzzlesMarkerMaxDistance', 0
+strShowNearestLogicGrid	du	'ShowNearestLogicGrid', 0
+strMinLogicGridDifficulty	du	'MinLogicGridDifficulty', 0
 strMod		du	'Mod', 0
 strVersion	du	'Version', 0
 strPakFileHash	du	'PakFileHash', 0
@@ -1594,6 +1619,8 @@ last_backup_time	dd	?
 backup_made	db	?
 use_temporary_file db	?
 show_nearest_unsolved	db	?
+show_nearest_logicgrid	db	?
+min_logicgrid_difficulty	db	?
 current_active_marker_type	db	?
 giskraken_init_called	db	?
 align 2
