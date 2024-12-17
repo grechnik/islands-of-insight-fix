@@ -1040,6 +1040,8 @@ find_nearest_unsolved:
 ; for the emote markers we need to distinguish actual logic grids and other types of grids
 	test	al, al
 	jnz	@f
+	cmp	byte [rcx+7D8h], 0	; bIsDoppel
+	jnz	.findnearest
 	mov	rdx, [rcx+6A0h]
 	mov	bl, [rdx+6B8h]	; difficulty
 	cmp	bl, [min_logicgrid_difficulty]
