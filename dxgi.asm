@@ -74,6 +74,14 @@ puzzledatabase_init_expected = 0x244489B04589C78B
 giskraken_init_offset = 0x124AEF0
 giskraken_init_expected = 0x74894808245C8948
 
+; UMatchboxRadarComponent::TickComponent has several checks that filter puzzles,
+; we need to patch two of them: the first one excludes hidden objects,
+; the second one directly checks against AMatchbox
+radar_hiddenobj_check_offset = 0x12D563F
+radar_hiddenobj_check_expected = 0x840FC08400000658
+radar_matchbox_check_offset = 0x12D56FD
+radar_matchbox_check_expected = 0xE83077D92F0FD858
+
 section '.text' code readable executable
 
 CreateDXGIFactory:
@@ -634,7 +642,36 @@ end virtual
 	mov	cl, 0
 .done_puzzledatabase_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
-	add	rdi, giskraken_init_offset - puzzledatabase_init_offset
+	add	rdi, radar_hiddenobj_check_offset - puzzledatabase_init_offset
+	lea	rcx, [strGameplay]
+	lea	rdx, [strAddChests]
+	xor	r8d, r8d
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	test	eax, eax
+	jz	.skip_chests_patch
+	mov	cl, 1
+	mov	rax, radar_hiddenobj_check_expected
+	cmp	[rdi-8], rax
+	jnz	.done_chests_patch
+	mov	rax, radar_matchbox_check_expected
+	cmp	[rdi+radar_matchbox_check_offset-7-radar_hiddenobj_check_offset], rax
+	jnz	.done_chests_patch
+	mov	rdx, radar_matchbox_check_offset+14-radar_hiddenobj_check_offset
+	call	make_writable.large
+	mov	byte [rdi], 0
+	lea	rdx, [rdi+radar_matchbox_check_offset-radar_hiddenobj_check_offset]
+	mov	word [rdx], 0xB848
+	lea	rax, [radar_check]
+	mov	[rdx+2], rax
+	mov	dword [rdx+10], 0x13EBD0FF ; call rax, jmp $+15h
+	mov	rdx, radar_matchbox_check_offset+14-radar_hiddenobj_check_offset
+	call	restore_protection.large
+	mov	cl, 0
+.done_chests_patch:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
+.skip_chests_patch:
+	add	rdi, giskraken_init_offset - radar_hiddenobj_check_offset
 	mov	rax, giskraken_init_expected
 	mov	cl, 1
 	cmp	[rdi], rax
@@ -1400,6 +1437,25 @@ hook_giskraken_init:
 	jmp	[giskraken_init_continue]
 .end:
 
+radar_check:
+; in dungeons, show everything except technical -1s
+; outside of dungeons, ignore gyroRing and rosary
+	mov	al, [rbx+254h]
+	cmp	al, -1
+	jz	.nope
+	cmp	qword [rbx+4E8h], 0
+	jnz	.ok
+	cmp	al, 9
+	jz	.nope
+	cmp	al, 26
+	jz	.nope
+.ok:
+	cmp	al, al
+	ret
+.nope:
+	cmp	al, -2
+	ret
+
 section '.rdata' data readable
 ; 100.0 to convert meters -> UE units, 2**-31 to deal with our random method
 hide_radius_multiplier	dd	0x33480000, 0x33480000, 0x33480000, 0
@@ -1599,6 +1655,7 @@ strEmoteMarksNearestUnsolved	du	'EmoteMarksNearestUnsolved', 0
 strHiddenPuzzlesMarkerMaxDistance	du	'HiddenPuzzlesMarkerMaxDistance', 0
 strShowNearestLogicGrid	du	'ShowNearestLogicGrid', 0
 strMinLogicGridDifficulty	du	'MinLogicGridDifficulty', 0
+strAddChests	du	'AddChests', 0
 strMod		du	'Mod', 0
 strVersion	du	'Version', 0
 strPakFileHash	du	'PakFileHash', 0
