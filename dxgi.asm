@@ -644,8 +644,8 @@ end virtual
 	or	[rbx + .patch_failed - .orig_dll_name], cl
 	add	rdi, radar_hiddenobj_check_offset - puzzledatabase_init_offset
 	lea	rcx, [strGameplay]
-	lea	rdx, [strAddChests]
-	xor	r8d, r8d
+	lea	rdx, [strHackMatchboxRadar]
+	mov	r8d, 1
 	mov	r9, rbx
 	call	[GetPrivateProfileIntW]
 	test	eax, eax
@@ -694,7 +694,6 @@ end virtual
 	mov	cl, 0
 .done_giskraken_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
-	cmp	[rbx + .patch_failed - .orig_dll_name], 0
 	jz	.done
 .nag:
 	xor	ecx, ecx
@@ -1655,7 +1654,7 @@ strEmoteMarksNearestUnsolved	du	'EmoteMarksNearestUnsolved', 0
 strHiddenPuzzlesMarkerMaxDistance	du	'HiddenPuzzlesMarkerMaxDistance', 0
 strShowNearestLogicGrid	du	'ShowNearestLogicGrid', 0
 strMinLogicGridDifficulty	du	'MinLogicGridDifficulty', 0
-strAddChests	du	'AddChests', 0
+strHackMatchboxRadar	du	'HackMatchboxRadar', 0
 strMod		du	'Mod', 0
 strVersion	du	'Version', 0
 strPakFileHash	du	'PakFileHash', 0
