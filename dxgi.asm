@@ -85,6 +85,10 @@ radar_matchbox_check_expected = 0xE83077D92F0FD858
 puzzlegrid_check_modifier_offset = 0x138EA71
 puzzlegrid_check_modifier_expected = 0x850F06F883410101
 
+chargridcomponent_hint_offset = 0x131D8D8
+chargridcomponent_hint_expected1 = 0x35100FF3
+chargridcomponent_hint_expected2 = 0x0561B880
+
 patch_liars_modifier = 0 ; disable for now, everything else does not support it anyway
 
 section '.text' code readable executable
@@ -473,7 +477,40 @@ end virtual
 .done_shownearest_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
 .skip_shownearest_patch:
-	add	rdi, sophiagameinstance_loadversion_offset - collectmarkers_exit_offset
+	add	rdi, chargridcomponent_hint_offset - collectmarkers_exit_offset
+	lea	rcx, [strGameplay]
+	lea	rdx, [strMusicHintCost]
+	xor	r8d, r8d
+	lea	r9, [modVersion]
+	mov	dword [rsp+20h], 256-1
+	mov	[rsp+28h], rbx
+	call	[GetPrivateProfileStringW]
+	lea	rcx, [modVersion]
+	cmp	word [rcx], 0
+	jz	.skip_musichint_patch
+	call	[_wtof]
+	cvtsd2ss xmm0, xmm0
+	comiss	xmm0, dword [hide_radius_multiplier+0Ch]
+	jb	.skip_musichint_patch
+	movss	[music_hint_cost], xmm0
+	mov	cl, 1
+	cmp	dword [rdi], chargridcomponent_hint_expected1
+	jnz	.done_musichint_patch
+	cmp	dword [rdi+8], chargridcomponent_hint_expected2
+	jnz	.done_musichint_patch
+	lea	rax, [rdi+15]
+	mov	[hook_hint_continue], rax
+	call	make_writable
+	mov	word [rdi], 0xB948
+	lea	rax, [hook_hint]
+	mov	[rdi+2], rax
+	mov	word [rdi+10], 0xE1FF
+	call	restore_protection
+	mov	cl, 0
+.done_musichint_patch:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
+.skip_musichint_patch:
+	add	rdi, sophiagameinstance_loadversion_offset - chargridcomponent_hint_offset
 	lea	rcx, [strMod]
 	lea	rdx, [strVersion]
 	xor	r8d, r8d
@@ -1496,15 +1533,31 @@ hook_puzzlegrid_check_modifier:
 	jmp	[continue_after_puzzlegrid_check_modifier1]
 end if
 
+hook_hint:
+; rax -> ASophiaRune
+	movss	xmm6, [normal_hint_cost]
+	mov	rdx, [rax+6A0h]
+	cmp	dword [rdx+690h], 4 ; EModifierType__MatchTheAudio
+	jbe	.not_music_grid
+	mov	rdx, [rdx+688h]
+	cmp	byte [rdx+4], 0
+	jz	.not_music_grid
+	movss	xmm6, [music_hint_cost]
+.not_music_grid:
+	cmp	byte [rax+561h], 0
+	jmp	[hook_hint_continue]
+.end:
+
 section '.rdata' data readable
 ; 100.0 to convert meters -> UE units, 2**-31 to deal with our random method
 hide_radius_multiplier	dd	0x33480000, 0x33480000, 0x33480000, 0
 logic_grid_and_like_offset	dd	0, 0, 240.0, 0
 
 data import
-library kernel32, 'KERNEL32.DLL', user32, 'USER32.DLL'
+library kernel32, 'KERNEL32.DLL', user32, 'USER32.DLL', convert, 'api-ms-win-crt-convert-l1-1-0.dll'
 include 'api/kernel32.inc'
 include 'api/user32.inc'
+import convert, _wtof, '_wtof'
 end data
 
 align 4
@@ -1533,6 +1586,7 @@ data 3  ; IMAGE_DIRECTORY_ENTRY_EXCEPTION
 	dd	rva hook_loadversion, rva hook_loadversion.end, rva make_writable_unwind
 	dd	rva hook_puzzledatabase_init, rva hook_puzzledatabase_init.end, rva hook_puzzledatabase_init_unwind
 	dd	rva hook_giskraken_init.start_stack_use, rva hook_giskraken_init.end, rva hook_giskraken_init_unwind
+	dd	rva hook_hint, rva hook_hint.end, rva hook_hint_unwind
 end data
 
 CreateDXGIFactory_unwind:
@@ -1646,6 +1700,24 @@ hook_giskraken_init_unwind:
 if .size mod 4
 	dw	0
 end if
+hook_hint_unwind:
+	db	1, 0, hook_hint_unwind.size / 2, 0
+.start:
+	db	0, 8 + 6*10h	; UWOP_SAVE_XMM128 xmm6
+	dw	0Bh
+	db	0, 4 + 6*10h	; UWOP_SAVE_NONVOL rsi
+	dw	1Dh
+	db	0, 4 + 5*10h	; UWOP_SAVE_NONVOL rbp
+	dw	1Ch
+	db	0, 4 + 3*10h	; UWOP_SAVE_NONVOL rbx
+	dw	1Bh
+	db	0, 1	; UWOP_ALLOC_LARGE
+	dw	18h
+	db	0, 70h	; UWOP_PUSH_NONVOL rdi
+.size = $ - .start
+if .size mod 4
+	dw	0
+end if
 
 align 4
 fixups_start = $
@@ -1656,6 +1728,7 @@ end if
 end data
 
 _2pow62	dd	0x5E800000
+normal_hint_cost	dd	1.0
 
 patch_failed_text:
 	db	'Some patches have not been applied. Probably the executable has been updated and you need to get a new version of the patch.', 0
@@ -1696,6 +1769,7 @@ strHiddenPuzzlesMarkerMaxDistance	du	'HiddenPuzzlesMarkerMaxDistance', 0
 strShowNearestLogicGrid	du	'ShowNearestLogicGrid', 0
 strMinLogicGridDifficulty	du	'MinLogicGridDifficulty', 0
 strHackMatchboxRadar	du	'HackMatchboxRadar', 0
+strMusicHintCost	du	'MusicHintCost', 0
 strMod		du	'Mod', 0
 strVersion	du	'Version', 0
 strPakFileHash	du	'PakFileHash', 0
@@ -1723,9 +1797,11 @@ if patch_liars_modifier
 continue_after_puzzlegrid_check_modifier1	dq	?
 continue_after_puzzlegrid_check_modifier2	dq	?
 end if
+hook_hint_continue	dq	?
 max_backups	dd	?
 backup_period	dd	?
 last_backup_time	dd	?
+music_hint_cost	dd	?
 backup_made	db	?
 use_temporary_file db	?
 show_nearest_unsolved	db	?
