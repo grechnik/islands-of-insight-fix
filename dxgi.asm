@@ -82,6 +82,11 @@ radar_hiddenobj_check_expected = 0x840FC08400000658
 radar_matchbox_check_offset = 0x12D56FD
 radar_matchbox_check_expected = 0xE83077D92F0FD858
 
+puzzlegrid_check_modifier_offset = 0x138EA71
+puzzlegrid_check_modifier_expected = 0x850F06F883410101
+
+patch_liars_modifier = 0 ; disable for now, everything else does not support it anyway
+
 section '.text' code readable executable
 
 CreateDXGIFactory:
@@ -694,6 +699,28 @@ end virtual
 	mov	cl, 0
 .done_giskraken_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
+if patch_liars_modifier
+	add	rdi, puzzlegrid_check_modifier_offset - giskraken_init_offset
+	mov	rax, puzzlegrid_check_modifier_expected
+	mov	cl, 1
+	cmp	[rdi-2], rax
+	jnz	.done_puzzlegrid_modifier11_patch
+	lea	rax, [rdi+14]
+	mov	[continue_after_puzzlegrid_check_modifier1], rax
+	mov	eax, [rdi+6]
+	lea	rax, [rax+rdi+10]
+	mov	[continue_after_puzzlegrid_check_modifier2], rax
+	call	make_writable
+	mov	word [rdi], 0xB848
+	lea	rax, [hook_puzzlegrid_check_modifier]
+	mov	[rdi+2], rax
+	mov	word [rdi+10], 0xE0FF
+	call	restore_protection
+	mov	cl, 0
+.done_puzzlegrid_modifier11_patch:
+	sub	rdi, puzzlegrid_check_modifier_offset - giskraken_init_offset
+	or	[rbx + .patch_failed - .orig_dll_name], cl
+end if
 	jz	.done
 .nag:
 	xor	ecx, ecx
@@ -1455,6 +1482,20 @@ radar_check:
 	cmp	al, -2
 	ret
 
+if patch_liars_modifier
+hook_puzzlegrid_check_modifier:
+	cmp	r8d, 11
+	jnz	@f
+	inc	dword [rsp+40h]
+@@:
+	cmp	r8d, 6
+	jz	@f
+	jmp	[continue_after_puzzlegrid_check_modifier2]
+@@:
+	mov	rax, [rbp-78h]
+	jmp	[continue_after_puzzlegrid_check_modifier1]
+end if
+
 section '.rdata' data readable
 ; 100.0 to convert meters -> UE units, 2**-31 to deal with our random method
 hide_radius_multiplier	dd	0x33480000, 0x33480000, 0x33480000, 0
@@ -1678,6 +1719,10 @@ loadfiletostring	dq	?
 FPaths_ProjectContentDir	dq	?
 puzzledatabase_init_continue	dq	?
 giskraken_init_continue	dq	?
+if patch_liars_modifier
+continue_after_puzzlegrid_check_modifier1	dq	?
+continue_after_puzzlegrid_check_modifier2	dq	?
+end if
 max_backups	dd	?
 backup_period	dd	?
 last_backup_time	dd	?
