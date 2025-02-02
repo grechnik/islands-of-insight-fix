@@ -1255,11 +1255,35 @@ find_nearest_unsolved:
 	jae	@b
 	mulps	xmm1, xword [hide_radius]
 	addps	xmm7, xmm1
+	jmp	.no_random_offset_big
 .no_random_offset:
 	mov	edx, (1 shl 0) or (1 shl 3) or (1 shl 19) or (1 shl 21)
 	bt	edx, eax
 	jnc	@f
-	addps	xmm7, xword [logic_grid_and_like_offset]
+; some puzzles from Reflections enclave are flipped via Scale3D, and some are rotated
+	mov	rdx, [rcx+130h]
+; apply the quaternion to get GetComponentToWorld().GetRotation().GetAxisZ()
+; result = 2*[X*Z + Y*W, Y*Z - X*W, -X*X - Y*Y] + [0,0,1]
+	movups	xmm3, [rdx+1C0h]	; xmm3 = [X Y Z W]
+	movaps	xmm0, xmm3
+	movaps	xmm1, xmm3
+	shufps	xmm0, xmm3, 0x44	; xmm0 = [X Y X ?]
+	shufps	xmm1, xmm3, 0x0A	; xmm1 = [Z Z X ?]
+	mulps	xmm0, xmm1	; xmm0 = [X*Z Y*Z X*X ?]
+	xorps	xmm0, xword [zw_sign]
+	movaps	xmm1, xmm3
+	shufps	xmm1, xmm3, 0x11	; xmm1 = [Y X Y ?]
+	shufps	xmm3, xmm3, 0x5F	; xmm3 = [W W Y ?]
+	mulps	xmm1, xmm3	; xmm1 = [Y*W X*W Y*Y ?]
+	xorps	xmm1, xword [yz_sign]
+	addps	xmm0, xmm1
+	addps	xmm0, xmm0
+	addps	xmm0, xword [z_one]
+	movss	xmm1, [logic_grid_and_like_offset]
+	mulss	xmm1, [rdx+1E8h]	; Scale3D.Z
+	shufps	xmm1, xmm1, 0x00
+	mulps	xmm0, xmm1
+	addps	xmm7, xmm0
 @@:
 .no_random_offset_big:
 ; compare the distance to the player with current best
@@ -1551,7 +1575,10 @@ hook_hint:
 section '.rdata' data readable
 ; 100.0 to convert meters -> UE units, 2**-31 to deal with our random method
 hide_radius_multiplier	dd	0x33480000, 0x33480000, 0x33480000, 0
-logic_grid_and_like_offset	dd	0, 0, 240.0, 0
+zw_sign	dd	0, 0, 0x80000000, 0x80000000
+yz_sign	dd	0, 0x80000000, 0x80000000, 0
+z_one	dd	0, 0, 1.0, 0
+logic_grid_and_like_offset	dd	240.0
 
 data import
 library kernel32, 'KERNEL32.DLL', user32, 'USER32.DLL', convert, 'api-ms-win-crt-convert-l1-1-0.dll'
