@@ -89,6 +89,15 @@ chargridcomponent_hint_offset = 0x131D8D8
 chargridcomponent_hint_expected1 = 0x35100FF3
 chargridcomponent_hint_expected2 = 0x0561B880
 
+spawnnotify_patch1_offset = 0x14DE211
+spawnnotify_patch1_expected = 0x02CCB53B413B8B48
+spawnnotify_patch2_offset = 0x14DE2D9
+spawnnotify_patch2_expected = 0x7489C6FF0C7501A8
+spawnnotify_addmsg_offset = 0x14DF2D5
+spawnnotify_addmsg_expected = 0x40247C80
+spawnnotify_stringmapinsertcall_offset = 0x14DF212
+spawnnotify_stringmapinsertcall_expected = 0xE8000003208D8D48
+
 patch_liars_modifier = 0 ; disable for now, everything else does not support it anyway
 
 section '.text' code readable executable
@@ -713,7 +722,53 @@ end virtual
 .done_chests_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
 .skip_chests_patch:
-	add	rdi, giskraken_init_offset - radar_hiddenobj_check_offset
+	add	rdi, spawnnotify_patch1_offset - radar_hiddenobj_check_offset
+	lea	rcx, [strGameplay]
+	lea	rdx, [strNotifyPuzzleSpawns]
+	xor	r8d, r8d
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	test	eax, eax
+	jz	.skip_spawnnotify_patch
+	mov	cl, 1
+	mov	rax, spawnnotify_patch1_expected
+	cmp	[rdi], rax
+	jnz	.done_spawnnotify_patch
+	mov	rax, spawnnotify_patch2_expected
+	cmp	[rdi+spawnnotify_patch2_offset-spawnnotify_patch1_offset], rax
+	jnz	.done_spawnnotify_patch
+	lea	rax, [rdi+15h]
+	mov	[spawnnotify_continue1], rax
+	add	rax, spawnnotify_addmsg_offset-spawnnotify_patch1_offset-15h
+	cmp	dword [rax], spawnnotify_addmsg_expected
+	jnz	.done_spawnnotify_patch
+	mov	[spawnnotify_continue3], rax
+	add	rax, spawnnotify_stringmapinsertcall_offset+5-spawnnotify_addmsg_offset
+	mov	rdx, spawnnotify_stringmapinsertcall_expected
+	cmp	[rax-12], rdx
+	jnz	.done_spawnnotify_patch
+	movsxd	rdx, dword [rax-4]
+	add	rax, rdx
+	mov	[stringmap_insert], rax
+	mov	rdx, spawnnotify_patch2_offset + 12 - spawnnotify_patch1_offset
+	lea	rax, [rdi+rdx]
+	mov	[spawnnotify_continue2], rax
+	call	make_writable.large
+	mov	word [rdi], 0xB848
+	lea	rax, [spawnnotify_hook1]
+	mov	[rdi+2], rax
+	mov	word [rdi+10], 0xE0FF
+	mov	rdx, spawnnotify_patch2_offset + 12 - spawnnotify_patch1_offset
+	mov	word [rdi+rdx-12], 0xB948
+	add	rax, spawnnotify_hook2 - spawnnotify_hook1
+	mov	[rdi+rdx-10], rax
+	mov	word [rdi+rdx-2], 0xE1FF
+	call	restore_protection.large
+	mov	cl, 0
+.done_spawnnotify_patch:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
+.skip_spawnnotify_patch:
+	add	rdi, giskraken_init_offset - spawnnotify_patch1_offset
 	mov	rax, giskraken_init_expected
 	mov	cl, 1
 	cmp	[rdi], rax
@@ -1572,6 +1627,50 @@ hook_hint:
 	jmp	[hook_hint_continue]
 .end:
 
+spawnnotify_hook1:
+	cmp	rbx, [r13+2D0h]
+	jnz	.notfirst
+	lea	rcx, [rbp+320h]
+	xor	eax, eax
+	mov	[rcx], rax
+	mov	[rcx+8], rax
+	mov	[rcx+20h], rax
+	mov	[rcx+28h], rax
+	mov	dword [rcx+2Ch], 80h
+	mov	[rcx+34h], rax
+	mov	[rcx+40h], rax
+	mov	[rcx+48h], rax
+	dec	eax
+	mov	[rcx+30h], eax
+	add	r14, 8
+.notfirst:
+	lea	rax, [rbx+8]
+	cmp	rax, r14
+	jz	.done
+	mov	rdi, [rbx]
+	cmp	esi, [r13+2CCh]
+	jl	@f
+	test	r15b, r15b
+	jz	.done
+@@:
+	jmp	[spawnnotify_continue1]
+.done:
+	jmp	[spawnnotify_continue3]
+
+spawnnotify_hook2:
+	test	al, 1
+	jnz	@f
+	inc	esi
+	xor	r9d, r9d
+	lea	r8, [rdi+40h]
+	lea	rdx, [rsp+20h]
+	lea	rcx, [rbp+320h]
+	mov	[rdx+24h], esi
+	call	[stringmap_insert]
+@@:
+	jmp	[spawnnotify_continue2]
+.end:
+
 section '.rdata' data readable
 ; 100.0 to convert meters -> UE units, 2**-31 to deal with our random method
 hide_radius_multiplier	dd	0x33480000, 0x33480000, 0x33480000, 0
@@ -1614,6 +1713,7 @@ data 3  ; IMAGE_DIRECTORY_ENTRY_EXCEPTION
 	dd	rva hook_puzzledatabase_init, rva hook_puzzledatabase_init.end, rva hook_puzzledatabase_init_unwind
 	dd	rva hook_giskraken_init.start_stack_use, rva hook_giskraken_init.end, rva hook_giskraken_init_unwind
 	dd	rva hook_hint, rva hook_hint.end, rva hook_hint_unwind
+	dd	rva spawnnotify_hook1, rva spawnnotify_hook2.end, rva spawnnotify_hook_unwind
 end data
 
 CreateDXGIFactory_unwind:
@@ -1745,6 +1845,30 @@ hook_hint_unwind:
 if .size mod 4
 	dw	0
 end if
+spawnnotify_hook_unwind:
+	db	1, 0, hook_hint_unwind.size / 2, 0
+.start:
+	db	0, 8 + 7*10h	; UWOP_SAVE_XMM128 xmm7
+	dw	51h
+	db	0, 8 + 6*10h	; UWOP_SAVE_XMM128 xmm6
+	dw	52h
+	db	0, 4 + 7*10h	; UWOP_SAVE_NONVOL rdi
+	dw	0AFh
+	db	0, 4 + 6*10h	; UWOP_SAVE_NONVOL rsi
+	dw	0AEh
+	db	0, 4 + 3*10h	; UWOP_SAVE_NONVOL rbx
+	dw	0ADh
+	db	0, 1	; UWOP_ALLOC_LARGE
+	dw	0A6h
+	db	0, 0F0h	; UWOP_PUSH_NONVOL r15
+	db	0, 0E0h	; UWOP_PUSH_NONVOL r14
+	db	0, 0D0h	; UWOP_PUSH_NONVOL r13
+	db	0, 0C0h ; UWOP_PUSH_NONVOL r12
+	db	0, 50h	; UWOP_PUSH_NONVOL rbp
+.size = $ - .start
+if .size mod 4
+	dw	0
+end if
 
 align 4
 fixups_start = $
@@ -1797,6 +1921,7 @@ strShowNearestLogicGrid	du	'ShowNearestLogicGrid', 0
 strMinLogicGridDifficulty	du	'MinLogicGridDifficulty', 0
 strHackMatchboxRadar	du	'HackMatchboxRadar', 0
 strMusicHintCost	du	'MusicHintCost', 0
+strNotifyPuzzleSpawns	du	'NotifyPuzzleSpawns', 0
 strMod		du	'Mod', 0
 strVersion	du	'Version', 0
 strPakFileHash	du	'PakFileHash', 0
@@ -1825,6 +1950,10 @@ continue_after_puzzlegrid_check_modifier1	dq	?
 continue_after_puzzlegrid_check_modifier2	dq	?
 end if
 hook_hint_continue	dq	?
+spawnnotify_continue1	dq	?
+spawnnotify_continue2	dq	?
+spawnnotify_continue3	dq	?
+stringmap_insert	dq	?
 max_backups	dd	?
 backup_period	dd	?
 last_backup_time	dd	?
