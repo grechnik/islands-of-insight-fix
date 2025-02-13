@@ -98,7 +98,7 @@ spawnnotify_addmsg_expected = 0x40247C80
 spawnnotify_stringmapinsertcall_offset = 0x14DF212
 spawnnotify_stringmapinsertcall_expected = 0xE8000003208D8D48
 
-patch_liars_modifier = 0 ; disable for now, everything else does not support it anyway
+patch_liars_modifier = 1
 
 section '.text' code readable executable
 
@@ -791,8 +791,8 @@ end virtual
 	mov	cl, 0
 .done_giskraken_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
-if patch_liars_modifier
 	add	rdi, puzzlegrid_check_modifier_offset - giskraken_init_offset
+if patch_liars_modifier
 	mov	rax, puzzlegrid_check_modifier_expected
 	mov	cl, 1
 	cmp	[rdi-2], rax
@@ -810,7 +810,6 @@ if patch_liars_modifier
 	call	restore_protection
 	mov	cl, 0
 .done_puzzlegrid_modifier11_patch:
-	sub	rdi, puzzlegrid_check_modifier_offset - giskraken_init_offset
 	or	[rbx + .patch_failed - .orig_dll_name], cl
 end if
 	jz	.done
@@ -1601,15 +1600,24 @@ radar_check:
 if patch_liars_modifier
 hook_puzzlegrid_check_modifier:
 	cmp	r8d, 11
-	jnz	@f
-	inc	dword [rsp+40h]
+	jnz	.notliar
+	mov	ecx, [rsp+40h]
 @@:
+	cmp	ecx, [r13+8]
+	jae	@f
+	inc	ecx
+	cmp	byte [r10+rcx-1], 0
+	jl	@b
+@@:
+	mov	[rsp+40h], ecx
+.notliar:
 	cmp	r8d, 6
 	jz	@f
 	jmp	[continue_after_puzzlegrid_check_modifier2]
 @@:
 	mov	rax, [rbp-78h]
 	jmp	[continue_after_puzzlegrid_check_modifier1]
+.end:
 end if
 
 hook_hint:
@@ -1712,6 +1720,9 @@ data 3  ; IMAGE_DIRECTORY_ENTRY_EXCEPTION
 	dd	rva hook_loadversion, rva hook_loadversion.end, rva make_writable_unwind
 	dd	rva hook_puzzledatabase_init, rva hook_puzzledatabase_init.end, rva hook_puzzledatabase_init_unwind
 	dd	rva hook_giskraken_init.start_stack_use, rva hook_giskraken_init.end, rva hook_giskraken_init_unwind
+if patch_liars_modifier
+	dd	rva hook_puzzlegrid_check_modifier, rva hook_puzzlegrid_check_modifier.end, rva hook_puzzlegrid_check_modifier_unwind
+end if
 	dd	rva hook_hint, rva hook_hint.end, rva hook_hint_unwind
 	dd	rva spawnnotify_hook1, rva spawnnotify_hook2.end, rva spawnnotify_hook_unwind
 end data
@@ -1826,6 +1837,30 @@ hook_giskraken_init_unwind:
 .size = $ - .start
 if .size mod 4
 	dw	0
+end if
+if patch_liars_modifier
+hook_puzzlegrid_check_modifier_unwind:
+	db	1, 0, hook_puzzlegrid_check_modifier_unwind.size / 2, 0
+.start:
+	db	0, 8 + 6*10h	; UWOP_SAVE_XMM128 xmm6
+	dw	54h
+	db	0, 4 + 7*10h	; UWOP_SAVE_NONVOL rdi
+	dw	0B3h
+	db	0, 4 + 6*10h	; UWOP_SAVE_NONVOL rsi
+	dw	0B2h
+	db	0, 4 + 3*10h	; UWOP_SAVE_NONVOL rbx
+	dw	0B1h
+	db	0, 1	; UWOP_ALLOC_LARGE
+	dw	0AAh
+	db	0, 0F0h	; UWOP_PUSH_NONVOL r15
+	db	0, 0E0h	; UWOP_PUSH_NONVOL r14
+	db	0, 0D0h	; UWOP_PUSH_NONVOL r13
+	db	0, 0C0h	; UWOP_PUSH_NONVOL r12
+	db	0, 50h	; UWOP_PUSH_NONVOL rbp
+.size = $ - .start
+if .size mod 4
+	dw	0
+end if
 end if
 hook_hint_unwind:
 	db	1, 0, hook_hint_unwind.size / 2, 0
