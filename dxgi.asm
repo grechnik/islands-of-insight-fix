@@ -109,6 +109,9 @@ bestsolvetime2_expected = 0x100F41F3A0458948
 getpuzzlesolvestatus_offset = 0x12462F0
 getpuzzlesolvestatus_expected = 0xD08B49F98B41F28B
 
+gridsolve_offset = 0x13C5606
+gridsolve_expected = 0x840F000478800000
+
 patch_liars_modifier = 0
 
 section '.text' code readable executable
@@ -838,8 +841,27 @@ end virtual
 	mov	cl, 0
 .done_bestsolvetime_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
+	add	rdi, gridsolve_offset - bestsolvetime1_offset
+	mov	cl, 1
+	mov	rax, gridsolve_expected
+	cmp	[rdi+5], rax
+	jnz	.done_gridsolve_patch
+	lea	rax, [rdi+11h]
+	mov	[gridsolve_continue1], rax
+	movsxd	rdx, [rax-4]
+	add	rax, rdx
+	mov	[gridsolve_continue2], rax
+	call	make_writable
+	mov	word [rdi], 0xB848
+	lea	rax, [hook_gridsolve_check]
+	mov	[rdi+2], rax
+	mov	word [rdi+10], 0xE0FF
+	call	restore_protection
+	mov	cl, 0
+.done_gridsolve_patch:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
 if patch_liars_modifier
-	add	rdi, puzzlegrid_check_modifier_offset - bestsolvetime1_offset
+	add	rdi, puzzlegrid_check_modifier_offset - gridsolve_offset
 	mov	rax, puzzlegrid_check_modifier_expected
 	mov	cl, 1
 	cmp	[rdi-2], rax
@@ -1304,12 +1326,13 @@ find_nearest_unsolved:
 ; get the middle point in the array because why not
 	cmp	al, 23
 	jnz	.not_racingballs
-	mov	eax, [rcx+5E8h]
-	test	eax, eax
+	mov	edx, [rcx+5E8h]
+	test	edx, edx
 	jz	.not_racingballs
-	shr	eax, 1
-	mov	rdx, [rcx+5E0h]
-	mov	rdx, [rdx+rax*8]
+	shr	edx, 1
+	shl	rdx, 3
+	add	rdx, [rcx+5E0h]
+	mov	rdx, [rdx]
 	jmp	.position_from_component
 .not_racingballs:
 ; for matchbox, repeat the loop twice for both components
@@ -1796,6 +1819,20 @@ hook_savesolvedtime2:
 	jmp	[savesolvedtime2_continue]
 .end:
 
+hook_gridsolve_check:
+	mov	rax, [rbx+688h]
+	cmp	ecx, 11
+	jbe	@f
+	cmp	byte [rax+11], 0
+	jz	@f
+.checkanswer:
+	jmp	[gridsolve_continue1]
+@@:
+	cmp	byte [rax+4], 0
+	jnz	.checkanswer
+	jmp	[gridsolve_continue2]
+.end:
+
 section '.rdata' data readable
 ; 100.0 to convert meters -> UE units, 2**-31 to deal with our random method
 hide_radius_multiplier	dd	0x33480000, 0x33480000, 0x33480000, 0
@@ -1845,6 +1882,7 @@ end if
 	dd	rva spawnnotify_hook1, rva spawnnotify_hook2.end, rva spawnnotify_hook_unwind
 	dd	rva hook_savesolvedtime1, rva hook_savesolvedtime1.end, rva hook_savesolvedtime1_unwind
 	dd	rva hook_savesolvedtime2, rva hook_savesolvedtime2.end, rva hook_savesolvedtime2_unwind
+	dd	rva hook_gridsolve_check, rva hook_gridsolve_check.end, rva hook_gridsolve_check_unwind
 end data
 
 CreateDXGIFactory_unwind:
@@ -2067,6 +2105,26 @@ hook_savesolvedtime2_unwind:
 if .size mod 4
 	dw	0
 end if
+hook_gridsolve_check_unwind:
+	db	1, 0, hook_gridsolve_check_unwind.size / 2, 0
+.start:
+	db	0, 4 + 7*10h	; UWOP_SAVE_NONVOL rdi
+	dw	0A1h
+	db	0, 4 + 6*10h	; UWOP_SAVE_NONVOL rsi
+	dw	0A0h
+	db	0, 4 + 3*10h	; UWOP_SAVE_NONVOL rbx
+	dw	9Fh
+	db	0, 1	; UWOP_ALLOC_LARGE
+	dw	98h
+	db	0, 0F0h	; UWOP_PUSH_NONVOL r15
+	db	0, 0E0h	; UWOP_PUSH_NONVOL r14
+	db	0, 0D0h	; UWOP_PUSH_NONVOL r13
+	db	0, 0C0h	; UWOP_PUSH_NONVOL r12
+	db	0, 50h	; UWOP_PUSH_NONVOL rbp
+.size = $ - .start
+if .size mod 4
+	dw	0
+end if
 
 align 4
 fixups_start = $
@@ -2155,6 +2213,8 @@ stringmap_insert	dq	?
 getpuzzlesolvestatus	dq	?
 savesolvedtime1_continue	dq	?
 savesolvedtime2_continue	dq	?
+gridsolve_continue1	dq	?
+gridsolve_continue2	dq	?
 max_backups	dd	?
 backup_period	dd	?
 last_backup_time	dd	?
