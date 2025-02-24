@@ -98,7 +98,18 @@ spawnnotify_addmsg_expected = 0x40247C80
 spawnnotify_stringmapinsertcall_offset = 0x14DF212
 spawnnotify_stringmapinsertcall_expected = 0xE8000003208D8D48
 
-patch_liars_modifier = 1
+; the first place to patch is in APuzzleBase::SetSolvedOnServer,
+; just before the call to UGISKraken::SolvePuzzle that writes to savefile
+bestsolvetime1_offset = 0x144B907
+bestsolvetime1_expected = 0x8BC08B4CB84D8D4C
+; the second place to patch is in APuzzleBase::AddSolvedPuzzle,
+; just before the call that updates in-memory FPlayerProgressionData
+bestsolvetime2_offset = 0x1442D91
+bestsolvetime2_expected = 0x100F41F3A0458948
+getpuzzlesolvestatus_offset = 0x12462F0
+getpuzzlesolvestatus_expected = 0xD08B49F98B41F28B
+
+patch_liars_modifier = 0
 
 section '.text' code readable executable
 
@@ -791,8 +802,44 @@ end virtual
 	mov	cl, 0
 .done_giskraken_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
-	add	rdi, puzzlegrid_check_modifier_offset - giskraken_init_offset
+	add	rdi, bestsolvetime1_offset - giskraken_init_offset
+	mov	cl, 1
+	cmp	[fmemory_free], 0
+	jz	.done_bestsolvetime_patch
+	mov	rax, bestsolvetime1_expected
+	cmp	[rdi], rax
+	jnz	.done_bestsolvetime_patch
+	mov	rax, bestsolvetime2_expected
+	cmp	[rdi - bestsolvetime1_offset + bestsolvetime2_offset], rax
+	jnz	.done_bestsolvetime_patch
+	lea	rdx, [rdi - bestsolvetime1_offset + getpuzzlesolvestatus_offset]
+	mov	rax, getpuzzlesolvestatus_expected
+	cmp	[rdx+10h], rax
+	jnz	.done_bestsolvetime_patch
+	mov	[getpuzzlesolvestatus], rdx
+	lea	rax, [rdi+13]
+	mov	[savesolvedtime1_continue], rax
+	call	make_writable
+	mov	word [rdi], 0xB948
+	lea	rax, [hook_savesolvedtime1]
+	mov	[rdi+2], rax
+	mov	word [rdi+10], 0xE1FF
+	call	restore_protection
+	sub	rdi, bestsolvetime1_offset - bestsolvetime2_offset
+	lea	rax, [rdi+14]
+	mov	[savesolvedtime2_continue], rax
+	call	make_writable
+	mov	word [rdi], 0xB948
+	lea	rax, [hook_savesolvedtime2]
+	mov	[rdi+2], rax
+	mov	word [rdi+10], 0xE1FF
+	call	restore_protection
+	add	rdi, bestsolvetime1_offset - bestsolvetime2_offset
+	mov	cl, 0
+.done_bestsolvetime_patch:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
 if patch_liars_modifier
+	add	rdi, puzzlegrid_check_modifier_offset - bestsolvetime1_offset
 	mov	rax, puzzlegrid_check_modifier_expected
 	mov	cl, 1
 	cmp	[rdi-2], rax
@@ -1679,12 +1726,83 @@ spawnnotify_hook2:
 	jmp	[spawnnotify_continue2]
 .end:
 
+hook_savesolvedtime1:
+	mov	cl, [rdi+254h]
+	cmp	cl, 23 ; racingBallCourse
+	jz	@f
+	cmp	cl, 24 ; racingRingCourse
+	jz	.racingring
+	cmp	dword [rdi+420h], 25248	; KrakenId of skydrops speed challenge
+	jnz	.passthrough
+@@:
+; xmm6 = current solve time, [rbp+0D8h] = historical best or -1
+	cmp	dword [rbp+0D8h], 0	; integer comparison with zero is fine for floats
+	jle	.passthrough
+	comiss	xmm6, [rbp+0D8h]
+	jb	.passthrough
+.skipupdate:
+	mov	rcx, [rax]
+	call	[fmemory_free]
+	mov	rcx, [rbp-48h]
+	call	[fmemory_free]
+	mov	rax, [savesolvedtime1_continue]
+	add	rax, 5
+	jmp	rax
+.racingring:
+	comiss	xmm6, [rbp+0D8h]
+	jb	.skipupdate
+.passthrough:
+	lea	r9, [rbp-48h]
+	mov	r8, rax
+	mov	edx, [rbp-78h]
+	mov	rcx, r15
+	jmp	[savesolvedtime1_continue]
+.end:
+
+hook_savesolvedtime2:
+	mov	r9d, [rdi+420h]
+	mov	cl, [rdi+254h]
+	cmp	cl, 23 ; racingBallCourse
+	jz	@f
+	cmp	cl, 24 ; racingRingCourse
+	jz	@f
+	cmp	r9d, 25248
+	jnz	.done
+@@:
+; [rdx]FPuzzleSolveData [rcx]UGISProgression::GetPuzzleSolveStatus(
+; [r8]const ASophiaCharacter* Player, [r9]int32 KrakenId, [rsp+20h]const FString& LocalID, [rsp+28h]const FString& hackId)
+	mov	rcx, rbx
+	mov	rdx, rax
+	mov	r8, r14
+	lea	rax, [rdi+488h]
+	mov	[rsp+20h], rax
+	lea	rax, [emptystring]
+	mov	[rsp+28h], rax
+	call	[getpuzzlesolvestatus]
+	mov	rcx, [rax+8]
+	call	[fmemory_free]
+	lea	rax, [rbp-50h]
+	movss	xmm0, dword [r15+20h]
+	cmp	dword [rax+18h], 0
+	jle	.done
+	cmp	byte [rdi+254h], 24
+	jz	.takemax
+	minss	xmm0, dword [rax+18h]
+	jmp	.done
+.takemax:
+	maxss	xmm0, dword [rax+18h]
+.done:
+	mov	[rbp-30h], r12
+	jmp	[savesolvedtime2_continue]
+.end:
+
 section '.rdata' data readable
 ; 100.0 to convert meters -> UE units, 2**-31 to deal with our random method
 hide_radius_multiplier	dd	0x33480000, 0x33480000, 0x33480000, 0
 zw_sign	dd	0, 0, 0x80000000, 0x80000000
 yz_sign	dd	0, 0x80000000, 0x80000000, 0
 z_one	dd	0, 0, 1.0, 0
+emptystring	dq	0, 0
 logic_grid_and_like_offset	dd	240.0
 
 data import
@@ -1725,6 +1843,8 @@ if patch_liars_modifier
 end if
 	dd	rva hook_hint, rva hook_hint.end, rva hook_hint_unwind
 	dd	rva spawnnotify_hook1, rva spawnnotify_hook2.end, rva spawnnotify_hook_unwind
+	dd	rva hook_savesolvedtime1, rva hook_savesolvedtime1.end, rva hook_savesolvedtime1_unwind
+	dd	rva hook_savesolvedtime2, rva hook_savesolvedtime2.end, rva hook_savesolvedtime2_unwind
 end data
 
 CreateDXGIFactory_unwind:
@@ -1904,6 +2024,49 @@ spawnnotify_hook_unwind:
 if .size mod 4
 	dw	0
 end if
+hook_savesolvedtime1_unwind:
+	db	1, 0, hook_savesolvedtime1_unwind.size / 2, 0
+.start:
+	db	0, 8 + 7*10h	; UWOP_SAVE_XMM128 xmm7
+	dw	2Fh
+	db	0, 8 + 6*10h	; UWOP_SAVE_XMM128 xmm6
+	dw	30h
+	db	0, 1	; UWOP_ALLOC_LARGE
+	dw	63h
+	db	0, 0F0h	; UWOP_PUSH_NONVOL r15
+	db	0, 0E0h	; UWOP_PUSH_NONVOL r14
+	db	0, 0D0h	; UWOP_PUSH_NONVOL r13
+	db	0, 0C0h	; UWOP_PUSH_NONVOL r12
+	db	0, 70h	; UWOP_PUSH_NONVOL rdi
+	db	0, 60h	; UWOP_PUSH_NONVOL rsi
+	db	0, 30h	; UWOP_PUSH_NONVOL rbx
+	db	0, 50h	; UWOP_PUSH_NONVOL rbp
+.size = $ - .start
+if .size mod 4
+	dw	0
+end if
+hook_savesolvedtime2_unwind:
+	db	1, 0, hook_savesolvedtime2_unwind.size / 2, 0
+.start:
+	db	0, 8 + 6*10h	; UWOP_SAVE_XMM128 xmm6
+	dw	17h
+	db	0, 4 + 0Ch*10h	; UWOP_SAVE_NONVOL r12
+	dw	37h
+	db	0, 4 + 7*10h	; UWOP_SAVE_NONVOL rdi
+	dw	36h
+	db	0, 4 + 6*10h	; UWOP_SAVE_NONVOL rsi
+	dw	35h
+	db	0, 4 + 3*10h	; UWOP_SAVE_NONVOL rbx
+	dw	34h
+	db	0, 1	; UWOP_ALLOC_LARGE
+	dw	30h
+	db	0, 0F0h	; UWOP_PUSH_NONVOL r15
+	db	0, 0E0h	; UWOP_PUSH_NONVOL r14
+	db	0, 50h	; UWOP_PUSH_NONVOL rbp
+.size = $ - .start
+if .size mod 4
+	dw	0
+end if
 
 align 4
 fixups_start = $
@@ -1989,6 +2152,9 @@ spawnnotify_continue1	dq	?
 spawnnotify_continue2	dq	?
 spawnnotify_continue3	dq	?
 stringmap_insert	dq	?
+getpuzzlesolvestatus	dq	?
+savesolvedtime1_continue	dq	?
+savesolvedtime2_continue	dq	?
 max_backups	dd	?
 backup_period	dd	?
 last_backup_time	dd	?
