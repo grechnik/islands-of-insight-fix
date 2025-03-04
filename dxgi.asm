@@ -112,7 +112,29 @@ getpuzzlesolvestatus_expected = 0xD08B49F98B41F28B
 gridsolve_offset = 0x13C5606
 gridsolve_expected = 0x840F000478800000
 
+ASandboxGameMode_vmt_Tick_offset = 0x468C3B8
+ASandboxGameMode_Tick_expected = 0xA486FF41
+ASandboxGameMode_vmt_InitGameMode_offset = 0x468C8A0
+ASandboxGameMode_InitGameMode_expected = 0xC748F98B4830EC83
+FFileHelper_LoadFileToArray_offset = 0x16F8F10
+GetSophiaCharacterFromWorld_offset = 0x1344A90
+GetAllPuzzleDataInZone_offset = 0x14AEE20
+GetAllSolvedPuzzleDataInZone_offset = 0x14AFDA0
+FActorSpawnParameters_ctr_offset = 0x35723C0
+FSoftObjectPtr_LoadSynchronous_offset = 0x097F4D0
+UWorld_SpawnActor_offset = 0x31C4330
+UItemData_StaticClass_offset = 0x1568960
+FStaticConstructObjectParameters_ctr_offset = 0x19329E0
+StaticConstructObject_Internal_offset = 0x194DDB0
+UDefaultItems_GetDefaultItem_offset = 0x12A7920
+USceneComponent_SetRelativeScale3D_offset = 0x3002860
+AActor_Destroy_offset = 0x2E3D710
+first_zone = 2
+num_zones = 5
+
 patch_liars_modifier = 0
+add_chests = 1
+debug_chests = 1
 
 section '.text' code readable executable
 
@@ -121,6 +143,7 @@ virtual at 0
 	rb	20h	; shadow space for callees
 .very_temporary	rq	3	; stack args for callees
 .full_pak_name	rq	2
+.directory_end	dq	?
 .saved_rcx	dq	?
 .saved_rdx	dq	?
 .saved_r8	dq	?
@@ -131,7 +154,7 @@ virtual at 0
 	align 2
 .tmp	dd	?	; used by make_writable/restore_protection
 .orig_dll_name:
-	rw	104h + 14h
+	rw	104h + 18h
 	align 16
 .stack_size = $
 end virtual
@@ -175,6 +198,7 @@ end virtual
 	sub	rdi, 2
 	jmp	@b
 @@:
+	mov	[rbx + .directory_end - .orig_dll_name], rdi
 	mov	rax, 0x0069006700780064 ; dxgi
 	stosq
 	mov	rax, 0x0069006E0069002E	; .ini
@@ -441,6 +465,15 @@ end virtual
 	mov	r9, rbx
 	call	[GetPrivateProfileIntW]
 	mov	byte [rbx + .tmp2 - .orig_dll_name], al
+if debug_chests
+	lea	rcx, [strGameplay]
+	lea	rdx, [strAddChestsMarker]
+	xor	r8d, r8d
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	mov	[add_chests_marker], al
+	or	al, byte [rbx + .tmp2 - .orig_dll_name]
+end if
 	or	al, [show_nearest_unsolved]
 	or	al, [show_nearest_logicgrid]
 	jz	.skip_shownearest_patch
@@ -782,6 +815,122 @@ end virtual
 .done_spawnnotify_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
 .skip_spawnnotify_patch:
+; should be the last code that works with .ini
+if add_chests
+	lea	rcx, [strGameplay]
+	lea	rdx, [strAddChests]
+	xor	r8d, r8d
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	test	eax, eax
+	jz	.skip_chests_patch2
+	mov	cl, 1
+	mov	rdx, [rdi+ASandboxGameMode_vmt_InitGameMode_offset-spawnnotify_patch1_offset]
+	mov	[original_initgamemode], rdx
+	lea	rax, [rdx+spawnnotify_patch1_offset]
+	sub	rax, rdi
+	cmp	rax, expected_image_size
+	jae	.done_chests_patch2
+	mov	rax, ASandboxGameMode_InitGameMode_expected
+	cmp	[rdx+0Ch], rax
+	jnz	.done_chests_patch2
+	mov	rdx, [rdi+ASandboxGameMode_vmt_Tick_offset-spawnnotify_patch1_offset]
+	lea	rax, [rdx+spawnnotify_patch1_offset]
+	sub	rax, rdi
+	cmp	rax, expected_image_size
+	jae	.done_chests_patch2
+	cmp	dword [rdx+25h], ASandboxGameMode_Tick_expected
+	jnz	.done_chests_patch2
+	mov	[original_gamemode_tick], rdx
+	mov	rdx, [rbx + .directory_end - .orig_dll_name]
+virtual at 0
+	du	'chests.bin', 0, 0
+assert $ = 18h
+load chests_bin_qword0 qword from 0
+load chests_bin_qword8 qword from 8
+load chests_bin_qword10 qword from 10h
+end virtual
+	mov	rax, chests_bin_qword0
+	mov	[rdx], rax
+	mov	rax, chests_bin_qword8
+	mov	[rdx+8], rax
+	mov	rax, chests_bin_qword10
+	mov	[rdx+10h], rax
+	lea	rax, [rdi+FFileHelper_LoadFileToArray_offset-spawnnotify_patch1_offset]
+	lea	rcx, [chests_bin_data]
+	mov	rdx, rbx
+	xor	r8d, r8d
+	call	rax
+	test	al, al
+	jz	.chests_bin_failed
+	lea	rax, [chests_by_zone]
+	mov	r8, qword [rax+chests_bin_data-chests_by_zone]
+	xor	ecx, ecx
+	cmp	dword [rax+chests_bin_data+8-chests_by_zone], ecx
+	jz	.chests_bin_failed
+	mov	r9d, first_zone
+.chests_bin_loop:
+	mov	edx, [r8+rcx]
+	cmp	edx, r9d
+	jb	.chests_bin_failed
+	jz	@f
+	cmp	edx, first_zone + num_zones
+	jae	.chests_bin_failed
+	mov	[rax+(rdx-first_zone)*8], ecx
+	mov	r9d, edx
+@@:
+	inc	dword [rax+(rdx-first_zone)*8+4]
+	add	ecx, 20h
+	cmp	ecx, dword [rax+chests_bin_data+8-chests_by_zone]
+	jb	.chests_bin_loop
+	jz	.chests_bin_ok
+.chests_bin_failed:
+	xor	ecx, ecx
+	lea	rdx, [bad_chests_text]
+	lea	r8, [bad_chests_caption]
+	lea	r9, [rcx+MB_OK+MB_ICONSTOP]
+	call	[MessageBoxA]
+	jmp	.skip_chests_patch2
+.chests_bin_ok:
+	lea	rax, [rdi+GetSophiaCharacterFromWorld_offset-spawnnotify_patch1_offset]
+	mov	[GetSophiaCharacterFromWorld], rax
+	add	rax, GetAllPuzzleDataInZone_offset-GetSophiaCharacterFromWorld_offset
+	mov	[GetAllPuzzleDataInZone], rax
+	add	rax, GetAllSolvedPuzzleDataInZone_offset-GetAllPuzzleDataInZone_offset
+	mov	[GetAllSolvedPuzzleDataInZone], rax
+	add	rax, FActorSpawnParameters_ctr_offset-GetAllSolvedPuzzleDataInZone_offset
+	mov	[FActorSpawnParameters_ctr], rax
+	add	rax, FSoftObjectPtr_LoadSynchronous_offset-FActorSpawnParameters_ctr_offset
+	mov	[FSoftObjectPtr_LoadSynchronous], rax
+	add	rax, UWorld_SpawnActor_offset-FSoftObjectPtr_LoadSynchronous_offset
+	mov	[UWorld_SpawnActor], rax
+	add	rax, UItemData_StaticClass_offset-UWorld_SpawnActor_offset
+	mov	[UItemData_StaticClass], rax
+	add	rax, FStaticConstructObjectParameters_ctr_offset-UItemData_StaticClass_offset
+	mov	[FStaticConstructObjectParameters_ctr], rax
+	add	rax, StaticConstructObject_Internal_offset-FStaticConstructObjectParameters_ctr_offset
+	mov	[StaticConstructObject_Internal], rax
+	add	rax, UDefaultItems_GetDefaultItem_offset-StaticConstructObject_Internal_offset
+	mov	[UDefaultItems_GetDefaultItem], rax
+	add	rax, USceneComponent_SetRelativeScale3D_offset-UDefaultItems_GetDefaultItem_offset
+	mov	[USceneComponent_SetRelativeScale3D], rax
+	add	rax, AActor_Destroy_offset-USceneComponent_SetRelativeScale3D_offset
+	mov	[AActor_Destroy], rax
+	add	rdi, ASandboxGameMode_vmt_Tick_offset-spawnnotify_patch1_offset
+	mov	edx, ASandboxGameMode_vmt_InitGameMode_offset-ASandboxGameMode_vmt_Tick_offset+8
+	call	make_writable.large
+	lea	rax, [hook_gamemode_tick]
+	mov	[rdi], rax
+	lea	rax, [hook_initgamemode]
+	mov	[rdi+ASandboxGameMode_vmt_InitGameMode_offset-ASandboxGameMode_vmt_Tick_offset], rax
+	mov	edx, ASandboxGameMode_vmt_InitGameMode_offset-ASandboxGameMode_vmt_Tick_offset+8
+	call	restore_protection.large
+	sub	rdi, ASandboxGameMode_vmt_Tick_offset-spawnnotify_patch1_offset
+	mov	cl, 0
+.done_chests_patch2:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
+.skip_chests_patch2:
+end if
 	add	rdi, giskraken_init_offset - spawnnotify_patch1_offset
 	mov	rax, giskraken_init_expected
 	mov	cl, 1
@@ -938,7 +1087,7 @@ make_writable:
 	mov	edx, 12
 .large:
 	sub	rsp, 28h
-.prolog_size = $ - make_writable
+.prolog_size = $ - make_writable.large
 	mov	rcx, rdi
 	mov	r8d, PAGE_READWRITE
 	lea	r9, [rbx - 4]
@@ -951,7 +1100,7 @@ restore_protection:
 	mov	edx, 12
 .large:
 	sub	rsp, 28h
-.prolog_size = $ - restore_protection
+.prolog_size = $ - restore_protection.large
 	mov	rcx, rdi
 	lea	r9, [rbx - 4]
 	mov	r8d, [r9]
@@ -1521,6 +1670,62 @@ additional_markers:
 	mov	rax, [r15+2C8h]
 	mov	[rdi+28h], rax ; mapTex
 .done:
+if debug_chests
+	cmp	[add_chests_marker], 0
+	jz	.no_chests_marker
+	lea	rdx, [spawned_chests]
+	mov	ecx, [rdx+total_spawned_chests-spawned_chests]
+	test	ecx, ecx
+	jz	.no_chests_marker
+	mov	rax, [r12+0A0h]	; UActorComponent::OwnerPrivate
+	mov	rax, [rax+220h]	; AHUD::PlayerOwner
+	mov	rax, [rax+250h]	; AController::Pawn
+	mov	rax, [rax+130h]	; AActor::RootComponent
+	movups	xmm0, [rax+1D0h]	; get player position
+	mov	eax, 7F800000h	; fp32 infinity
+	movd	xmm1, eax
+.find_nearest_chest:
+	mov	rax, [rdx+spawned_chest_struct.chest]
+	test	rax, rax
+	jz	@f
+	mov	rax, [rax+130h]
+	movups	xmm2, [rax+1D0h]
+	subps	xmm2, xmm0
+	mulps	xmm2, xmm2
+	movaps	xmm3, xmm2
+	movaps	xmm4, xmm2
+	shufps	xmm2, xmm2, 55h
+	shufps	xmm3, xmm3, 0AAh
+	addss	xmm2, xmm4
+	addss	xmm2, xmm3
+	comiss	xmm1, xmm2
+	jbe	@f
+	movss	xmm1, xmm2
+	movups	xmm6, [rax+1D0h]
+@@:
+	add	rdx, spawned_chest_struct.sizeof
+	dec	ecx
+	jnz	.find_nearest_chest
+	lea	rcx, [rsp+30h]
+	mov	ebx, [rcx+8]
+	lea	eax, [rbx+1]
+	mov	[rcx+8], eax
+	cmp	eax, [rcx+0Ch]
+	jbe	@f
+	mov	edx, ebx
+	call	[tarray216_resize_grow]
+@@:
+	imul	edi, ebx, 0xD8
+	add	rdi, [rsp+30h]
+	mov	rcx, rdi
+	call	[FLocationMarkerData_constructor]
+	movups	[rdi], xmm6
+	mov	dword [rdi+0Ch], 1 ; VisibleOnScreen = true, VisibleOnMap = showEverywhere = ShowOverFog = false
+	mov	rax, [r12+0C0h]
+	mov	rax, [rax+168h] ; defaultTex
+	mov	[rdi+20h], rax ; worldTex
+.no_chests_marker:
+end if
 	mov	rax, [rsp+30h]
 	mov	rcx, [rbp+1D8h]
 	mov	[rcx], rax
@@ -1631,6 +1836,234 @@ hook_puzzledatabase_init:
 	add	rcx, 320h - 468h
 	jmp	[puzzledatabase_init_continue]
 .end:
+
+if add_chests
+virtual at 0
+spawned_chest_struct:
+.chest	dq	?
+.original_scale	rd	3	; +134h
+.opentime	dd	?
+.zone		dd	?
+.data_offset	dd	?
+.sizeof:
+end virtual
+hook_initgamemode:
+	sub	rsp, 28h
+	mov	[rsp+20h], rcx
+	call	spawn_chests_if_needed
+	mov	rcx, [rsp+20h]
+	add	rsp, 28h
+	db	48h
+	jmp	[original_initgamemode]
+.end:
+
+hook_gamemode_tick:
+	push	rbx
+.prolog_offs1 = $ - hook_gamemode_tick
+	push	rsi
+.prolog_offs2 = $ - hook_gamemode_tick
+	sub	rsp, 28h
+.prolog_offs3 = $ - hook_gamemode_tick
+.prolog_size = $ - hook_gamemode_tick
+	mov	[rsp+20h], rcx
+	movss	[rsp+40h], xmm1
+	lea	rsi, [spawned_chests]
+	mov	ebx, dword [rsi-spawned_chests+total_spawned_chests]
+	test	ebx, ebx
+	jz	.done
+.loop:
+	mov	rcx, [rsi+spawned_chest_struct.chest]
+	test	rcx, rcx
+	jz	.nextchest
+	cmp	byte [rcx+248h], 0	; bIsOpen
+	jz	.nextchest
+	movss	xmm0, [rsi+spawned_chest_struct.opentime]
+	addss	xmm0, xmm1
+	movss	[rsi+spawned_chest_struct.opentime], xmm0
+	subss	xmm0, [opened_chest_lifetime]
+	comiss	xmm0, dword [z_one+0] ; constant zero
+	jae	.destroy
+	mulss	xmm0, [opened_chest_shrink_speed]
+	comiss	xmm0, dword [z_one+8] ; constant one
+	jae	.nextchest
+	shufps	xmm0, xmm0, 0
+	movups	xmm1, xword [rsi+spawned_chest_struct.original_scale]
+	mulps	xmm0, xmm1
+	lea	rdx, [rsp+50h]
+	movaps	[rdx], xmm0
+	mov	rcx, [rcx+130h]
+	call	[USceneComponent_SetRelativeScale3D]
+	jmp	.restoreregs
+.destroy:
+	xor	edx, edx
+	mov	r8b, 1
+	call	[AActor_Destroy]
+	and	qword [rsi+spawned_chest_struct.chest], 0
+	mov	eax, [rsi+spawned_chest_struct.zone]
+	lea	rdx, [num_spawned_chests_by_zone-2*4]
+	dec	dword [rdx+rax*4]
+	mov	rcx, [rsp+20h]
+	call	spawn_chests_if_needed
+.restoreregs:
+	movss	xmm1, [rsp+40h]
+.nextchest:
+	add	rsi, spawned_chest_struct.sizeof
+	dec	ebx
+	jnz	.loop
+.done:
+	mov	rcx, [rsp+20h]
+	add	rsp, 28h
+	pop	rsi
+	pop	rbx
+	db	48h
+	jmp	[original_gamemode_tick]
+.end:
+
+spawn_chests_if_needed:
+	push	rbp
+.prolog_offs1 = $ - spawn_chests_if_needed
+	push	rbx
+.prolog_offs2 = $ - spawn_chests_if_needed
+	push	rsi
+.prolog_offs3 = $ - spawn_chests_if_needed
+	push	rdi
+.prolog_offs4 = $ - spawn_chests_if_needed
+	sub	rsp, 78h
+.prolog_offs5 = $ - spawn_chests_if_needed
+.prolog_size = $ - spawn_chests_if_needed
+	lea	rbp, [rsp+30h]
+	mov	rax, [rcx]
+	call	qword [rax+160h]
+	mov	rdi, rax	; rdi -> UWorld
+	mov	rcx, rax
+	lea	rdx, [rbp-8]	; [rbp-8] = [rsp+28h] -> ASophiaCharacter
+	call	[GetSophiaCharacterFromWorld]
+	test	al, al
+	jz	.fail
+	mov	ebx, 2
+.zoneloop:
+	lea	rsi, [chests_by_zone]
+	mov	eax, dword [rsi-chests_by_zone+num_spawned_chests_by_zone+(rbx-2)*4]
+	test	eax, eax
+	jnz	.nextzone
+	cmp	[rsi+(rbx-2)*8+4], eax
+	jbe	.nextzone
+	mov	rcx, [rdi+180h]	; OwningGameInstance
+	mov	rcx, [rcx+218h]	; PuzzleDatabase
+	mov	rdx, rbp
+	mov	r8, [rbp-8]
+	lea	r9, [rbp+10h]
+	mov	[r9], bl
+	call	[GetAllSolvedPuzzleDataInZone]
+	mov	rcx, [rax]
+	call	[fmemory_free]
+	mov	esi, [rbp+8]
+	add	esi, esi
+	lea	esi, [rsi*5]
+	mov	rcx, [rdi+180h]
+	mov	rcx, [rcx+218h]
+	mov	rdx, rbp
+	lea	r8, [rbp+10h]
+	call	[GetAllPuzzleDataInZone]
+	mov	rcx, [rax]
+	call	[fmemory_free]
+	cmp	dword [rbp+8], 0
+	jz	.nextzone
+	mov	eax, esi
+	xor	edx, edx
+	div	dword [rbp+8]
+	cmp	eax, 3
+	jb	.nextzone
+	lea	rsi, [chests_by_zone]
+.findplace:
+	call	[rand]
+	mul	dword [rsi+(rbx-2)*8+4]
+	shrd	eax, edx, 15
+	shl	eax, 5
+	add	eax, [rsi+(rbx-2)*8]
+	lea	r8, [rsi+spawned_chests-chests_by_zone]
+	mov	ecx, dword [rsi+total_spawned_chests-chests_by_zone]
+	test	ecx, ecx
+	jz	.placeok
+.checkplace:
+	cmp	[r8+spawned_chest_struct.data_offset], eax
+	jnz	@f
+	cmp	[r8+spawned_chest_struct.chest], 0
+	jnz	.findplace
+	mov	edx, dword [rsi-chests_by_zone+num_spawned_chests_by_zone+(rbx-2)*4]
+	inc	edx
+	cmp	[rsi+(rbx-2)*8+4], edx
+	ja	.findplace
+@@:
+	add	r8, spawned_chest_struct.sizeof
+	dec	ecx
+	jnz	.checkplace
+.placeok:
+	mov	esi, eax
+	mov	rcx, rbp
+	mov	[rbp-10h], rcx
+	call	[FActorSpawnParameters_ctr]
+	mov	rcx, [rdi+118h] ; AuthorityGameMode
+	add	rcx, 470h ; ItemPickupClass
+	call	[FSoftObjectPtr_LoadSynchronous]
+	mov	rdx, rax
+	lea	r8, [rsi+8]
+	add	r8, [chests_bin_data]
+	lea	r9, [r8+0Ch]
+	mov	rcx, rdi
+	call	[UWorld_SpawnActor]
+	lea	rdx, [spawned_chests]
+	inc	[rdx-spawned_chests+num_spawned_chests_by_zone+(rbx-2)*4]
+	mov	ecx, [rdx+total_spawned_chests-spawned_chests]
+	test	ecx, ecx
+	jz	.newchestinfo
+.findfreechestinfo:
+	cmp	[rdx+spawned_chest_struct.chest], 0
+	jnz	@f
+	cmp	[rdx+spawned_chest_struct.zone], ebx
+	jz	.storechestinfo
+@@:
+	add	rdx, spawned_chest_struct.sizeof
+	dec	ecx
+	jnz	.findfreechestinfo
+.newchestinfo:
+	inc	[total_spawned_chests]
+.storechestinfo:
+	mov	[rdx+spawned_chest_struct.chest], rax
+	mov	rcx, [rax+130h]
+	movups	xmm0, [rcx+134h]
+	movups	xword [rdx+spawned_chest_struct.original_scale], xmm0
+	and	[rdx+spawned_chest_struct.opentime], 0
+	mov	[rdx+spawned_chest_struct.zone], ebx
+	mov	[rdx+spawned_chest_struct.data_offset], esi
+	mov	rsi, rax
+	call	[UItemData_StaticClass]
+	mov	rcx, rbp
+	mov	rdx, rax
+	call	[FStaticConstructObjectParameters_ctr]
+	mov	rcx, rbp
+	call	[StaticConstructObject_Internal]
+	mov	[rsi+240h], rax
+	mov	rsi, rax
+	mov	rcx, [rbp-8]
+	mov	rcx, [rcx+920h]	; CharItemComponent
+	mov	rcx, [rcx+0C0h]	; itemsDataAsset
+	mov	dl, 11
+	call	[UDefaultItems_GetDefaultItem]
+	mov	[rsi+28h], rax
+.nextzone:
+	inc	ebx
+	cmp	bl, first_zone + num_zones
+	jb	.zoneloop
+.fail:
+	add	rsp, 78h
+	pop	rdi
+	pop	rsi
+	pop	rbx
+	pop	rbp
+	ret
+.end:
+end if
 
 hook_giskraken_init:
 	bts	dword [giskraken_init_called], 0
@@ -1841,12 +2274,17 @@ yz_sign	dd	0, 0x80000000, 0x80000000, 0
 z_one	dd	0, 0, 1.0, 0
 emptystring	dq	0, 0
 logic_grid_and_like_offset	dd	240.0
+if add_chests
+opened_chest_lifetime	dd	10.0
+opened_chest_shrink_speed	dd	-0.2
+end if
 
 data import
-library kernel32, 'KERNEL32.DLL', user32, 'USER32.DLL', convert, 'api-ms-win-crt-convert-l1-1-0.dll'
+library kernel32, 'KERNEL32.DLL', user32, 'USER32.DLL', convert, 'api-ms-win-crt-convert-l1-1-0.dll', utility, 'api-ms-win-crt-utility-l1-1-0.dll'
 include 'api/kernel32.inc'
 include 'api/user32.inc'
 import convert, _wtof, '_wtof'
+import utility, rand, 'rand'
 end data
 
 align 4
@@ -1867,13 +2305,18 @@ data 3  ; IMAGE_DIRECTORY_ENTRY_EXCEPTION
 	dd	rva CreateDXGIFactory, rva CreateDXGIFactory.end, rva CreateDXGIFactory_unwind
 	dd	rva save_game_patched, rva save_game_patched.end, rva save_game_patched_unwind
 	dd	rva make_backup, rva make_backup.end, rva make_backup_unwind
-	dd	rva make_writable, rva make_writable.end, rva make_writable_unwind
-	dd	rva restore_protection, rva restore_protection.end, rva make_writable_unwind
+	dd	rva make_writable.large, rva make_writable.end, rva make_writable_unwind
+	dd	rva restore_protection.large, rva restore_protection.end, rva make_writable_unwind
 	dd	rva find_nearest_unsolved, rva find_nearest_unsolved.end, rva find_nearest_unsolved_unwind
 	dd	rva additional_markers, rva additional_markers.end, rva additional_markers_unwind
 	dd	rva hook_putmarker.start_stack_use, rva hook_putmarker.end, rva make_writable_unwind
 	dd	rva hook_loadversion, rva hook_loadversion.end, rva make_writable_unwind
 	dd	rva hook_puzzledatabase_init, rva hook_puzzledatabase_init.end, rva hook_puzzledatabase_init_unwind
+if add_chests
+	dd	rva hook_initgamemode, rva hook_initgamemode.end, rva make_writable_unwind
+	dd	rva hook_gamemode_tick, rva hook_gamemode_tick.end, rva hook_gamemode_tick_unwind
+	dd	rva spawn_chests_if_needed, rva spawn_chests_if_needed.end, rva spawn_chests_if_needed_unwind
+end if
 	dd	rva hook_giskraken_init.start_stack_use, rva hook_giskraken_init.end, rva hook_giskraken_init_unwind
 if patch_liars_modifier
 	dd	rva hook_puzzlegrid_check_modifier, rva hook_puzzlegrid_check_modifier.end, rva hook_puzzlegrid_check_modifier_unwind
@@ -1885,46 +2328,44 @@ end if
 	dd	rva hook_gridsolve_check, rva hook_gridsolve_check.end, rva hook_gridsolve_check_unwind
 end data
 
+macro start_unwind_data {
+.start:
+}
+macro end_unwind_data {
+.size = $ - .start
+if .size mod 4
+	dw	0
+end if
+}
+
 CreateDXGIFactory_unwind:
 	db	1, CreateDXGIFactory.prolog_size, CreateDXGIFactory_unwind.size / 2, 0
-.start:
+start_unwind_data
 	db	CreateDXGIFactory.prolog_offs3, 1	; UWOP_ALLOC_LARGE
 	dw	(CreateDXGIFactory.stack_size + 8) / 8	; arg for UWOP_ALLOC_LARGE
 	db	CreateDXGIFactory.prolog_offs2, 70h ; UWOP_PUSH_NONVOL=0, rdi->7
 	db	CreateDXGIFactory.prolog_offs1, 30h ; UWOP_PUSH_NONVOL=0, rbx->3
-.size = $ - .start
-if .size mod 4
-	dw	0
-end if
+end_unwind_data
 save_game_patched_unwind:
 	db	1, 0, save_game_patched_unwind.size / 2, 0
-.start:
+start_unwind_data
 	db	0, 2 + ((28h - 8) / 8) * 10h ; UWOP_ALLOC_SMALL for 28h bytes
-.size = $ - .start
-if .size mod 4
-	dw	0
-end if
+end_unwind_data
 make_backup_unwind:
 	db	1, make_backup.prolog_size, make_backup_unwind.size / 2, 0
-.start:
+start_unwind_data
 	db	make_backup.prolog_offs3, 2 + ((make_backup.stack_size - 8) / 8) * 10h
 	db	make_backup.prolog_offs2, 70h ; UWOP_PUSH_NONVOL=0, rdi->7
 	db	make_backup.prolog_offs1, 30h ; UWOP_PUSH_NONVOL=0, rbx->3
-.size = $ - .start
-if .size mod 4
-	dw	0
-end if
-make_writable_unwind: ; also used for restore_protection
+end_unwind_data
+make_writable_unwind: ; also used for everything with simple prolog/epilog
 	db	1, make_writable.prolog_size, make_writable_unwind.size / 2, 0
-.start:
+start_unwind_data
 	db	make_writable.prolog_size, 2 + ((28h - 8) / 8) * 10h
-.size = $ - .start
-if .size mod 4
-	dw	0
-end if
+end_unwind_data
 find_nearest_unsolved_unwind:
 	db	1, find_nearest_unsolved.prolog_size, find_nearest_unsolved_unwind.size / 2, 0
-.start:
+start_unwind_data
 	db	find_nearest_unsolved.prolog_offs12, 8 + 10 * 10h ; UWOP_SAVE_XMM128 for xmm10
 	dw	6	; saved to [rsp+60h]
 	db	find_nearest_unsolved.prolog_offs11, 8 + 9 * 10h ; UWOP_SAVE_XMM128 for xmm9
@@ -1942,13 +2383,10 @@ find_nearest_unsolved_unwind:
 	db	find_nearest_unsolved.prolog_offs3, 70h	; UWOP_PUSH_NONVOL rdi
 	db	find_nearest_unsolved.prolog_offs2, 60h	; UWOP_PUSH_NONVOL rsi
 	db	find_nearest_unsolved.prolog_offs1, 30h	; UWOP_PUSH_NONVOL rbx
-.size = $ - .start
-if .size mod 4
-	dw	0
-end if
+end_unwind_data
 additional_markers_unwind:
 	db	1, 0, additional_markers_unwind.size / 2, 0
-.start:
+start_unwind_data
 ; we don't manipulate the stack ourselves, but inherit these from the main code
 	db	0, 8 + 6 * 10h	; UWOP_SAVE_XMM128 for xmm6
 	dw	27h	; saved to [rsp+270h]
@@ -1962,13 +2400,10 @@ additional_markers_unwind:
 	db	0, 60h	; UWOP_PUSH_NONVOL rsi
 	db	0, 30h	; UWOP_PUSH_NONVOL rbx
 	db	0, 50h	; UWOP_PUSH_NONVOL rbp
-.size = $ - .start
-if .size mod 4
-	dw	0
-end if
+end_unwind_data
 hook_puzzledatabase_init_unwind:
 	db	1, 0, hook_puzzledatabase_init_unwind.size / 2, 0
-.start:
+start_unwind_data
 ; we don't manipulate the stack ourselves, but inherit these from the main code
 	db	0, 4 + 7*10h	; UWOP_SAVE_NONVOL rdi
 	dw	53h
@@ -1983,23 +2418,33 @@ hook_puzzledatabase_init_unwind:
 	db	0, 0D0h	; UWOP_PUSH_NONVOL r13
 	db	0, 0C0h	; UWOP_PUSH_NONVOL r12
 	db	0, 50h	; UWOP_PUSH_NONVOL rbp
-.size = $ - .start
-if .size mod 4
-	dw	0
-end if
+end_unwind_data
+hook_gamemode_tick_unwind:
+	db	1, hook_gamemode_tick.prolog_size, .size / 2, 0
+start_unwind_data
+	db	hook_gamemode_tick.prolog_offs3, 2 + ((28h - 8) / 8) * 10h	; UWOP_ALLOC_SMALL for 28h bytes
+	db	hook_gamemode_tick.prolog_offs2, 60h	; UWOP_PUSH_NONVOL rsi
+	db	hook_gamemode_tick.prolog_offs1, 30h	; UWOP_PUSH_NONVOL rbx
+end_unwind_data
+spawn_chests_if_needed_unwind:
+	db	1, spawn_chests_if_needed.prolog_size, .size / 2, 0
+start_unwind_data
+	db	spawn_chests_if_needed.prolog_offs5, 2 + ((78h - 8) / 8) * 10h	; UWOP_ALLOC_SMALL for 78h bytes
+	db	spawn_chests_if_needed.prolog_offs4, 70h	; UWOP_PUSH_NONVOL rdi
+	db	spawn_chests_if_needed.prolog_offs3, 60h	; UWOP_PUSH_NONVOL rsi
+	db	spawn_chests_if_needed.prolog_offs2, 30h	; UWOP_PUSH_NONVOL rbx
+	db	spawn_chests_if_needed.prolog_offs1, 50h	; UWOP_PUSH_NONVOL rbp
+end_unwind_data
 hook_giskraken_init_unwind:
 	db	1, hook_giskraken_init.prolog_size, hook_giskraken_init_unwind.size / 2, 0
-.start:
+start_unwind_data
 	db	hook_giskraken_init.prolog_offs2, 2 + ((60h - 8) / 8) * 10h	; UWOP_ALLOC_SMALL for 60h bytes
 	db	hook_giskraken_init.prolog_offs1, 70h	; UWOP_PUSH_NONVOL rdi
-.size = $ - .start
-if .size mod 4
-	dw	0
-end if
+end_unwind_data
 if patch_liars_modifier
 hook_puzzlegrid_check_modifier_unwind:
 	db	1, 0, hook_puzzlegrid_check_modifier_unwind.size / 2, 0
-.start:
+start_unwind_data
 	db	0, 8 + 6*10h	; UWOP_SAVE_XMM128 xmm6
 	dw	54h
 	db	0, 4 + 7*10h	; UWOP_SAVE_NONVOL rdi
@@ -2015,14 +2460,11 @@ hook_puzzlegrid_check_modifier_unwind:
 	db	0, 0D0h	; UWOP_PUSH_NONVOL r13
 	db	0, 0C0h	; UWOP_PUSH_NONVOL r12
 	db	0, 50h	; UWOP_PUSH_NONVOL rbp
-.size = $ - .start
-if .size mod 4
-	dw	0
-end if
+end_unwind_data
 end if
 hook_hint_unwind:
 	db	1, 0, hook_hint_unwind.size / 2, 0
-.start:
+start_unwind_data
 	db	0, 8 + 6*10h	; UWOP_SAVE_XMM128 xmm6
 	dw	0Bh
 	db	0, 4 + 6*10h	; UWOP_SAVE_NONVOL rsi
@@ -2034,13 +2476,10 @@ hook_hint_unwind:
 	db	0, 1	; UWOP_ALLOC_LARGE
 	dw	18h
 	db	0, 70h	; UWOP_PUSH_NONVOL rdi
-.size = $ - .start
-if .size mod 4
-	dw	0
-end if
+end_unwind_data
 spawnnotify_hook_unwind:
 	db	1, 0, hook_hint_unwind.size / 2, 0
-.start:
+start_unwind_data
 	db	0, 8 + 7*10h	; UWOP_SAVE_XMM128 xmm7
 	dw	51h
 	db	0, 8 + 6*10h	; UWOP_SAVE_XMM128 xmm6
@@ -2058,13 +2497,10 @@ spawnnotify_hook_unwind:
 	db	0, 0D0h	; UWOP_PUSH_NONVOL r13
 	db	0, 0C0h ; UWOP_PUSH_NONVOL r12
 	db	0, 50h	; UWOP_PUSH_NONVOL rbp
-.size = $ - .start
-if .size mod 4
-	dw	0
-end if
+end_unwind_data
 hook_savesolvedtime1_unwind:
 	db	1, 0, hook_savesolvedtime1_unwind.size / 2, 0
-.start:
+start_unwind_data
 	db	0, 8 + 7*10h	; UWOP_SAVE_XMM128 xmm7
 	dw	2Fh
 	db	0, 8 + 6*10h	; UWOP_SAVE_XMM128 xmm6
@@ -2079,13 +2515,10 @@ hook_savesolvedtime1_unwind:
 	db	0, 60h	; UWOP_PUSH_NONVOL rsi
 	db	0, 30h	; UWOP_PUSH_NONVOL rbx
 	db	0, 50h	; UWOP_PUSH_NONVOL rbp
-.size = $ - .start
-if .size mod 4
-	dw	0
-end if
+end_unwind_data
 hook_savesolvedtime2_unwind:
 	db	1, 0, hook_savesolvedtime2_unwind.size / 2, 0
-.start:
+start_unwind_data
 	db	0, 8 + 6*10h	; UWOP_SAVE_XMM128 xmm6
 	dw	17h
 	db	0, 4 + 0Ch*10h	; UWOP_SAVE_NONVOL r12
@@ -2101,13 +2534,10 @@ hook_savesolvedtime2_unwind:
 	db	0, 0F0h	; UWOP_PUSH_NONVOL r15
 	db	0, 0E0h	; UWOP_PUSH_NONVOL r14
 	db	0, 50h	; UWOP_PUSH_NONVOL rbp
-.size = $ - .start
-if .size mod 4
-	dw	0
-end if
+end_unwind_data
 hook_gridsolve_check_unwind:
 	db	1, 0, hook_gridsolve_check_unwind.size / 2, 0
-.start:
+start_unwind_data
 	db	0, 4 + 7*10h	; UWOP_SAVE_NONVOL rdi
 	dw	0A1h
 	db	0, 4 + 6*10h	; UWOP_SAVE_NONVOL rsi
@@ -2121,10 +2551,7 @@ hook_gridsolve_check_unwind:
 	db	0, 0D0h	; UWOP_PUSH_NONVOL r13
 	db	0, 0C0h	; UWOP_PUSH_NONVOL r12
 	db	0, 50h	; UWOP_PUSH_NONVOL rbp
-.size = $ - .start
-if .size mod 4
-	dw	0
-end if
+end_unwind_data
 
 align 4
 fixups_start = $
@@ -2151,6 +2578,11 @@ error_pak_file_text:
 mismatch_pak_file_text:
 	db	"Please re-download and re-install the latest version of Offline Restored Mod", 0
 
+bad_chests_caption:
+	db	'Offline Restored Mod: bad chests.bin file', 0
+bad_chests_text:
+	db	'AddChests is on, but chests.bin is missing or broken. Reinstall the mod or disable AddChests', 0
+
 align 2
 str_tmp	du	'.tmp',0
 str_OfflineSavegame	du	'OfflineSavegame',0
@@ -2176,6 +2608,12 @@ strHiddenPuzzlesMarkerMaxDistance	du	'HiddenPuzzlesMarkerMaxDistance', 0
 strShowNearestLogicGrid	du	'ShowNearestLogicGrid', 0
 strMinLogicGridDifficulty	du	'MinLogicGridDifficulty', 0
 strHackMatchboxRadar	du	'HackMatchboxRadar', 0
+if add_chests
+strAddChests	du	'AddChests', 0
+end if
+if debug_chests
+strAddChestsMarker	du	'AddChestsMarker', 0
+end if
 strMusicHintCost	du	'MusicHintCost', 0
 strNotifyPuzzleSpawns	du	'NotifyPuzzleSpawns', 0
 strMod		du	'Mod', 0
@@ -2215,6 +2653,30 @@ savesolvedtime1_continue	dq	?
 savesolvedtime2_continue	dq	?
 gridsolve_continue1	dq	?
 gridsolve_continue2	dq	?
+
+if add_chests
+original_initgamemode	dq	?
+original_gamemode_tick	dq	?
+GetSophiaCharacterFromWorld	dq	?
+GetAllPuzzleDataInZone	dq	?
+GetAllSolvedPuzzleDataInZone	dq	?
+FActorSpawnParameters_ctr	dq	?
+FSoftObjectPtr_LoadSynchronous	dq	?
+UWorld_SpawnActor	dq	?
+UItemData_StaticClass	dq	?
+FStaticConstructObjectParameters_ctr	dq	?
+StaticConstructObject_Internal	dq	?
+UDefaultItems_GetDefaultItem	dq	?
+USceneComponent_SetRelativeScale3D	dq	?
+AActor_Destroy	dq	?
+
+chests_bin_data	rq	2
+chests_by_zone	rd	num_zones*2
+total_spawned_chests	dd	?
+num_spawned_chests_by_zone	rd	num_zones
+spawned_chests:	rb	num_zones * spawned_chest_struct.sizeof
+end if
+
 max_backups	dd	?
 backup_period	dd	?
 last_backup_time	dd	?
@@ -2226,6 +2688,9 @@ show_nearest_logicgrid	db	?
 min_logicgrid_difficulty	db	?
 current_active_marker_type	db	?
 giskraken_init_called	db	?
+if debug_chests
+add_chests_marker	db	?
+end if
 align 2
 modVersion	rw	256
 pakFileHash	rw	41
