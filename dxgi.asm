@@ -539,20 +539,12 @@ end if
 .skip_shownearest_patch:
 	add	rdi, chargridcomponent_hint_offset - collectmarkers_exit_offset
 	lea	rcx, [strGameplay]
-	lea	rdx, [strMusicHintCost]
-	xor	r8d, r8d
-	lea	r9, [modVersion]
-	mov	dword [rsp+20h], 256-1
-	mov	[rsp+28h], rbx
-	call	[GetPrivateProfileStringW]
-	lea	rcx, [modVersion]
-	cmp	word [rcx], 0
+	lea	rdx, [strCheaperMusicForesight]
+	mov	r8d, 1
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	test	eax, eax
 	jz	.skip_musichint_patch
-	call	[_wtof]
-	cvtsd2ss xmm0, xmm0
-	comiss	xmm0, dword [hide_radius_multiplier+0Ch]
-	jb	.skip_musichint_patch
-	movss	[music_hint_cost], xmm0
 	mov	cl, 1
 	cmp	dword [rdi], chargridcomponent_hint_expected1
 	jnz	.done_musichint_patch
@@ -2344,10 +2336,9 @@ opened_chest_shrink_speed	dd	-0.2
 end if
 
 data import
-library kernel32, 'KERNEL32.DLL', user32, 'USER32.DLL', convert, 'api-ms-win-crt-convert-l1-1-0.dll', utility, 'api-ms-win-crt-utility-l1-1-0.dll'
+library kernel32, 'KERNEL32.DLL', user32, 'USER32.DLL', utility, 'api-ms-win-crt-utility-l1-1-0.dll'
 include 'api/kernel32.inc'
 include 'api/user32.inc'
-import convert, _wtof, '_wtof'
 import utility, rand, 'rand'
 end data
 
@@ -2635,6 +2626,7 @@ end data
 
 _2pow62	dd	0x5E800000
 normal_hint_cost	dd	1.0
+music_hint_cost		dd	0.5
 
 patch_failed_text:
 	db	'Some patches have not been applied. Probably the executable has been updated and you need to get a new version of the patch.', 0
@@ -2686,7 +2678,7 @@ end if
 if debug_chests
 strAddChestsMarker	du	'AddChestsMarker', 0
 end if
-strMusicHintCost	du	'MusicHintCost', 0
+strCheaperMusicForesight	du	'CheaperMusicForesight', 0
 strNotifyPuzzleSpawns	du	'NotifyPuzzleSpawns', 0
 strMod		du	'Mod', 0
 strVersion	du	'Version', 0
@@ -2753,7 +2745,6 @@ end if
 max_backups	dd	?
 backup_period	dd	?
 last_backup_time	dd	?
-music_hint_cost	dd	?
 backup_made	db	?
 use_temporary_file db	?
 show_nearest_unsolved	db	?
