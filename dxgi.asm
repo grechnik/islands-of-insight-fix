@@ -120,6 +120,8 @@ execGetLevel_offset = 0x1595CFE
 execGetLevel_expected = 0xC35B20C483480389
 findmarkerclass_offset = 0x151C11D
 findmarkerclass_expected = 0xE8CE8B48000000E0
+ARacingBalls_AppendLocationMarkers_offset = 0x142CDEE
+ARacingBalls_AppendLocationMarkers_expected = 0x8C0F000005E8BF3B
 FFileHelper_LoadFileToArray_offset = 0x16F8F10
 GetSophiaCharacterFromWorld_offset = 0x1344A90
 GetAllPuzzleDataInZone_offset = 0x14AEE20
@@ -921,7 +923,7 @@ end virtual
 	mov	[rdi+ASandboxGameMode_vmt_InitGameMode_offset-ASandboxGameMode_vmt_Tick_offset], rax
 	mov	edx, ASandboxGameMode_vmt_InitGameMode_offset-ASandboxGameMode_vmt_Tick_offset+8
 	call	restore_protection.large
-; noncritical patch, ignore fails
+; noncritical patches for better radar visuals, ignore fails
 	add	rdi, execGetLevel_offset-ASandboxGameMode_vmt_Tick_offset
 	cmp	byte [rdi], 0xE8
 	jnz	@f
@@ -935,7 +937,6 @@ end virtual
 	mov	word [rdi+10], 0xE0FF
 	call	restore_protection
 @@:
-; another noncritical patch, ignore fails too
 	add	rdi, findmarkerclass_offset-execGetLevel_offset
 	mov	rax, findmarkerclass_expected
 	cmp	[rdi+3], rax
@@ -952,7 +953,15 @@ end virtual
 	mov	rdx, 14
 	call	restore_protection.large
 @@:
-	add	rdi, spawnnotify_patch1_offset-findmarkerclass_offset
+	add	rdi, ARacingBalls_AppendLocationMarkers_offset-findmarkerclass_offset
+	mov	rax, ARacingBalls_AppendLocationMarkers_expected
+	cmp	[rdi-8], rax
+	jnz	@f
+	call	make_writable
+	and	dword [rdi], 0
+	call	restore_protection
+@@:
+	add	rdi, spawnnotify_patch1_offset-ARacingBalls_AppendLocationMarkers_offset
 	mov	cl, 0
 .done_chests_patch2:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
@@ -1499,15 +1508,13 @@ find_nearest_unsolved:
 .not_followtheshiny:
 ; for racingballs, there are several relevant points,
 ; but the reference point is not one of them;
-; get the middle point in the array because why not
+; get the first point in the array for consistency with the radar patch
+; (and the radar patch gets the first point because it is the easiest way there)
 	cmp	al, 23
 	jnz	.not_racingballs
-	mov	edx, [rcx+5E8h]
-	test	edx, edx
+	cmp	dword [rcx+5E8h], 0
 	jz	.not_racingballs
-	shr	edx, 1
-	shl	rdx, 3
-	add	rdx, [rcx+5E0h]
+	mov	rdx, [rcx+5E0h]
 	mov	rdx, [rdx]
 	jmp	.position_from_component
 .not_racingballs:
