@@ -116,6 +116,10 @@ ASandboxGameMode_vmt_Tick_offset = 0x468C3B8
 ASandboxGameMode_Tick_expected = 0xA486FF41
 ASandboxGameMode_vmt_InitGameMode_offset = 0x468C8A0
 ASandboxGameMode_InitGameMode_expected = 0xC748F98B4830EC83
+execGetLevel_offset = 0x1595CFE
+execGetLevel_expected = 0xC35B20C483480389
+findmarkerclass_offset = 0x151C11D
+findmarkerclass_expected = 0xE8CE8B48000000E0
 FFileHelper_LoadFileToArray_offset = 0x16F8F10
 GetSophiaCharacterFromWorld_offset = 0x1344A90
 GetAllPuzzleDataInZone_offset = 0x14AEE20
@@ -925,7 +929,38 @@ end virtual
 	mov	[rdi+ASandboxGameMode_vmt_InitGameMode_offset-ASandboxGameMode_vmt_Tick_offset], rax
 	mov	edx, ASandboxGameMode_vmt_InitGameMode_offset-ASandboxGameMode_vmt_Tick_offset+8
 	call	restore_protection.large
-	sub	rdi, ASandboxGameMode_vmt_Tick_offset-spawnnotify_patch1_offset
+; noncritical patch, ignore fails
+	add	rdi, execGetLevel_offset-ASandboxGameMode_vmt_Tick_offset
+	cmp	byte [rdi], 0xE8
+	jnz	@f
+	mov	rax, execGetLevel_expected
+	cmp	[rdi+5], rax
+	jnz	@f
+	call	make_writable
+	mov	word [rdi], 0xB848
+	lea	rax, [hook_execGetLevel]
+	mov	[rdi+2], rax
+	mov	word [rdi+10], 0xE0FF
+	call	restore_protection
+@@:
+; another noncritical patch, ignore fails too
+	add	rdi, findmarkerclass_offset-execGetLevel_offset
+	mov	rax, findmarkerclass_expected
+	cmp	[rdi+3], rax
+	jnz	@f
+	movsxd	rax, dword [rdi+11]
+	lea	rax, [rax+rdi+15]
+	mov	[original_findmarkerclass], rax
+	mov	rdx, 14
+	call	make_writable.large
+	mov	word [rdi], 0xB848
+	lea	rax, [hook_findmarkerclass]
+	mov	[rdi+2], rax
+	mov	dword [rdi+10], 0xB190D0FF
+	mov	rdx, 14
+	call	restore_protection.large
+@@:
+	add	rdi, spawnnotify_patch1_offset-findmarkerclass_offset
 	mov	cl, 0
 .done_chests_patch2:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
@@ -2063,6 +2098,35 @@ spawn_chests_if_needed:
 	pop	rbp
 	ret
 .end:
+
+hook_execGetLevel:
+	mov	eax, [rcx+6B8h]	; UPuzzleGrid.levelOverride
+	sub	eax, 5
+	jae	@f
+	xor	eax, eax
+@@:
+	mov	[rbx], eax
+	add	rsp, 20h
+	pop	rbx
+	ret
+.end:
+
+hook_findmarkerclass:
+	sub	rsp, 28h
+	lea	rdx, [rbp+0E0h]
+	mov	rcx, rsi
+	call	[original_findmarkerclass]
+	cmp	dword [rax], -1
+	jz	@f
+	mov	rcx, [rbp-38h]
+	mov	rcx, [rcx+6A0h]	; PuzzleGrid
+	cmp	byte [rcx+6B8h], 5
+	ja	@f
+	or	dword [rax], -1
+@@:
+	add	rsp, 28h
+	ret
+.end:
 end if
 
 hook_giskraken_init:
@@ -2316,6 +2380,8 @@ if add_chests
 	dd	rva hook_initgamemode, rva hook_initgamemode.end, rva make_writable_unwind
 	dd	rva hook_gamemode_tick, rva hook_gamemode_tick.end, rva hook_gamemode_tick_unwind
 	dd	rva spawn_chests_if_needed, rva spawn_chests_if_needed.end, rva spawn_chests_if_needed_unwind
+	dd	rva hook_execGetLevel, rva hook_execGetLevel.end, rva hook_execGetLevel_unwind
+	dd	rva hook_findmarkerclass, rva hook_findmarkerclass.end, rva make_writable_unwind
 end if
 	dd	rva hook_giskraken_init.start_stack_use, rva hook_giskraken_init.end, rva hook_giskraken_init_unwind
 if patch_liars_modifier
@@ -2434,6 +2500,12 @@ start_unwind_data
 	db	spawn_chests_if_needed.prolog_offs3, 60h	; UWOP_PUSH_NONVOL rsi
 	db	spawn_chests_if_needed.prolog_offs2, 30h	; UWOP_PUSH_NONVOL rbx
 	db	spawn_chests_if_needed.prolog_offs1, 50h	; UWOP_PUSH_NONVOL rbp
+end_unwind_data
+hook_execGetLevel_unwind:
+	db	1, 0, .size / 2, 0
+start_unwind_data
+	db	0, 2 + ((20h - 8) / 8) * 10h	; UWOP_ALLOC_SMALL
+	db	0, 30h	; UWOP_PUSH_NONVOL rbx
 end_unwind_data
 hook_giskraken_init_unwind:
 	db	1, hook_giskraken_init.prolog_size, hook_giskraken_init_unwind.size / 2, 0
@@ -2657,6 +2729,7 @@ gridsolve_continue2	dq	?
 if add_chests
 original_initgamemode	dq	?
 original_gamemode_tick	dq	?
+original_findmarkerclass	dq	?
 GetSophiaCharacterFromWorld	dq	?
 GetAllPuzzleDataInZone	dq	?
 GetAllSolvedPuzzleDataInZone	dq	?
