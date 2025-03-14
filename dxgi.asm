@@ -1683,6 +1683,15 @@ additional_markers:
 .add_marker:
 	mov	r15, rax
 	movaps	xmm6, xmm0
+; if our puzzle is in UMarkerComponent::AdditionalPuzzlesToMark list,
+; the marker already exists, don't add the duplicate one
+	mov	ecx, [r12+0B8h]
+	test	ecx, ecx
+	jz	@f
+	mov	rdi, [r12+0B0h]
+	repnz scasq
+	jz	.done
+@@:
 ; we have got our puzzle, now fill the marker
 	lea	rcx, [rsp+30h]
 	mov	ebx, [rcx+8]
