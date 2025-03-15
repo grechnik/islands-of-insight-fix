@@ -135,6 +135,7 @@ StaticConstructObject_Internal_offset = 0x194DDB0
 UDefaultItems_GetDefaultItem_offset = 0x12A7920
 USceneComponent_SetRelativeScale3D_offset = 0x3002860
 AActor_Destroy_offset = 0x2E3D710
+FName_ctr_offset = 0x172FC80 ; FName::FName(const char*, EFindName)
 first_zone = 2
 num_zones = 5
 
@@ -914,6 +915,11 @@ end virtual
 	mov	[USceneComponent_SetRelativeScale3D], rax
 	add	rax, AActor_Destroy_offset-USceneComponent_SetRelativeScale3D_offset
 	mov	[AActor_Destroy], rax
+	add	rax, FName_ctr_offset-AActor_Destroy_offset
+	lea	rcx, [FName_BP_ManualRosary_C]
+	lea	rdx, [strBP_ManualRosary_C]
+	mov	r8d, 1
+	call	rax
 	add	rdi, ASandboxGameMode_vmt_Tick_offset-spawnnotify_patch1_offset
 	mov	edx, ASandboxGameMode_vmt_InitGameMode_offset-ASandboxGameMode_vmt_Tick_offset+8
 	call	make_writable.large
@@ -2158,7 +2164,7 @@ radar_check:
 ; outside of dungeons, ignore gyroRing and rosary
 	mov	al, [rbx+254h]
 	cmp	al, -1
-	jz	.nope
+	jz	.check_manual_rosary
 	cmp	qword [rbx+4E8h], 0
 	jnz	.ok
 	cmp	al, 9
@@ -2170,6 +2176,11 @@ radar_check:
 	ret
 .nope:
 	cmp	al, -2
+	ret
+.check_manual_rosary:
+	mov	rdx, [rcx+10h]
+	mov	edx, [rdx+18h]
+	cmp	edx, dword [FName_BP_ManualRosary_C]
 	ret
 
 if patch_liars_modifier
@@ -2663,6 +2674,10 @@ bad_chests_caption:
 bad_chests_text:
 	db	'AddChests is on, but chests.bin is missing or broken. Reinstall the mod or disable AddChests', 0
 
+if add_chests
+strBP_ManualRosary_C	db	'BP_ManualRosary_C', 0
+end if
+
 align 2
 str_tmp	du	'.tmp',0
 str_OfflineSavegame	du	'OfflineSavegame',0
@@ -2750,6 +2765,7 @@ StaticConstructObject_Internal	dq	?
 UDefaultItems_GetDefaultItem	dq	?
 USceneComponent_SetRelativeScale3D	dq	?
 AActor_Destroy	dq	?
+FName_BP_ManualRosary_C	dq	?
 
 chests_bin_data	rq	2
 chests_by_zone	rd	num_zones*2
