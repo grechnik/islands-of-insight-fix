@@ -2172,6 +2172,12 @@ radar_check:
 	cmp	al, 26
 	jz	.nope
 .ok:
+; also, skip mysteries
+	test	al, al
+	jnz	@f
+	cmp	byte [rcx+7D8h], 0	; bIsDoppel
+	jnz	.nope
+@@:
 	cmp	al, al
 	ret
 .nope:
