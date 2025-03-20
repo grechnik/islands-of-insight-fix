@@ -112,6 +112,10 @@ getpuzzlesolvestatus_expected = 0xD08B49F98B41F28B
 gridsolve_offset = 0x13C5606
 gridsolve_expected = 0x840F000478800000
 
+hiddencube_makesoundevent_offset = 0x13FE69C
+hiddencube_makesoundevent_expected = 0x01B8410000050887
+EventInstanceSetVolume_offset = 0x0DA42A0
+
 ASandboxGameMode_vmt_Tick_offset = 0x468C3B8
 ASandboxGameMode_Tick_expected = 0xA486FF41
 ASandboxGameMode_vmt_InitGameMode_offset = 0x468C8A0
@@ -814,6 +818,34 @@ end if
 .done_spawnnotify_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
 .skip_spawnnotify_patch:
+	add	rdi, hiddencube_makesoundevent_offset-spawnnotify_patch1_offset
+	lea	rcx, [strGameplay]
+	lea	rdx, [strHiddenCubeSoundVolumePercentage]
+	or	r8d, -1
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	test	eax, eax
+	js	.skip_hiddencube_soundpatch
+	mov	ecx, 1000
+	cmp	eax, ecx
+	cmova	eax, ecx
+	cvtsi2ss xmm0, eax
+	mulss	xmm0, [one_percent]
+	movss	[hiddencube_sound_volume], xmm0
+	mov	cl, 1
+	mov	rax, hiddencube_makesoundevent_expected
+	cmp	[rdi+2], rax
+	jnz	.done_hiddencube_soundpatch
+	call	make_writable
+	mov	word [rdi], 0xB948
+	lea	rax, [hook_AHiddenCube_makesoundevent]
+	mov	[rdi+2], rax
+	mov	dword [rdi+10], 0x4890D1FF
+	call	restore_protection
+	mov	cl, 0
+.done_hiddencube_soundpatch:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
+.skip_hiddencube_soundpatch:
 ; should be the last code that works with .ini
 if add_chests
 	lea	rcx, [strGameplay]
@@ -824,17 +856,17 @@ if add_chests
 	test	eax, eax
 	jz	.skip_chests_patch2
 	mov	cl, 1
-	mov	rdx, [rdi+ASandboxGameMode_vmt_InitGameMode_offset-spawnnotify_patch1_offset]
+	mov	rdx, [rdi+ASandboxGameMode_vmt_InitGameMode_offset-hiddencube_makesoundevent_offset]
 	mov	[original_initgamemode], rdx
-	lea	rax, [rdx+spawnnotify_patch1_offset]
+	lea	rax, [rdx+hiddencube_makesoundevent_offset]
 	sub	rax, rdi
 	cmp	rax, expected_image_size
 	jae	.done_chests_patch2
 	mov	rax, ASandboxGameMode_InitGameMode_expected
 	cmp	[rdx+0Ch], rax
 	jnz	.done_chests_patch2
-	mov	rdx, [rdi+ASandboxGameMode_vmt_Tick_offset-spawnnotify_patch1_offset]
-	lea	rax, [rdx+spawnnotify_patch1_offset]
+	mov	rdx, [rdi+ASandboxGameMode_vmt_Tick_offset-hiddencube_makesoundevent_offset]
+	lea	rax, [rdx+hiddencube_makesoundevent_offset]
 	sub	rax, rdi
 	cmp	rax, expected_image_size
 	jae	.done_chests_patch2
@@ -855,7 +887,7 @@ end virtual
 	mov	[rdx+8], rax
 	mov	rax, chests_bin_qword10
 	mov	[rdx+10h], rax
-	lea	rax, [rdi+FFileHelper_LoadFileToArray_offset-spawnnotify_patch1_offset]
+	lea	rax, [rdi+FFileHelper_LoadFileToArray_offset-hiddencube_makesoundevent_offset]
 	lea	rcx, [chests_bin_data]
 	mov	rdx, rbx
 	xor	r8d, r8d
@@ -891,7 +923,7 @@ end virtual
 	call	[MessageBoxA]
 	jmp	.skip_chests_patch2
 .chests_bin_ok:
-	lea	rax, [rdi+GetSophiaCharacterFromWorld_offset-spawnnotify_patch1_offset]
+	lea	rax, [rdi+GetSophiaCharacterFromWorld_offset-hiddencube_makesoundevent_offset]
 	mov	[GetSophiaCharacterFromWorld], rax
 	add	rax, GetAllPuzzleDataInZone_offset-GetSophiaCharacterFromWorld_offset
 	mov	[GetAllPuzzleDataInZone], rax
@@ -920,7 +952,7 @@ end virtual
 	lea	rdx, [strBP_ManualRosary_C]
 	mov	r8d, 1
 	call	rax
-	add	rdi, ASandboxGameMode_vmt_Tick_offset-spawnnotify_patch1_offset
+	add	rdi, ASandboxGameMode_vmt_Tick_offset-hiddencube_makesoundevent_offset
 	mov	edx, ASandboxGameMode_vmt_InitGameMode_offset-ASandboxGameMode_vmt_Tick_offset+8
 	call	make_writable.large
 	lea	rax, [hook_gamemode_tick]
@@ -967,13 +999,13 @@ end virtual
 	and	dword [rdi], 0
 	call	restore_protection
 @@:
-	add	rdi, spawnnotify_patch1_offset-ARacingBalls_AppendLocationMarkers_offset
+	add	rdi, hiddencube_makesoundevent_offset-ARacingBalls_AppendLocationMarkers_offset
 	mov	cl, 0
 .done_chests_patch2:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
 .skip_chests_patch2:
 end if
-	add	rdi, giskraken_init_offset - spawnnotify_patch1_offset
+	add	rdi, giskraken_init_offset - hiddencube_makesoundevent_offset
 	mov	rax, giskraken_init_expected
 	mov	cl, 1
 	cmp	[rdi], rax
@@ -2355,6 +2387,21 @@ hook_gridsolve_check:
 	jmp	[gridsolve_continue2]
 .end:
 
+hook_AHiddenCube_makesoundevent:
+	sub	rsp, 28h
+	mov	rbx, rax
+	mov	rcx, rax
+	movss	xmm1, [hiddencube_sound_volume]
+	mov	rax, [rsp+28h]
+	add	rax, EventInstanceSetVolume_offset - (0x13FE69C + 12)
+	call	rax
+	mov	rax, rbx
+	mov	[rdi+508h], rax
+	mov	r8d, 1
+	add	rsp, 28h
+	ret
+.end:
+
 section '.rdata' data readable
 ; 100.0 to convert meters -> UE units, 2**-31 to deal with our random method
 hide_radius_multiplier	dd	0x33480000, 0x33480000, 0x33480000, 0
@@ -2367,6 +2414,7 @@ if add_chests
 opened_chest_lifetime	dd	10.0
 opened_chest_shrink_speed	dd	-0.2
 end if
+one_percent	dd	0.01
 
 data import
 library kernel32, 'KERNEL32.DLL', user32, 'USER32.DLL', utility, 'api-ms-win-crt-utility-l1-1-0.dll'
@@ -2717,6 +2765,7 @@ strAddChestsMarker	du	'AddChestsMarker', 0
 end if
 strCheaperMusicForesight	du	'CheaperMusicForesight', 0
 strNotifyPuzzleSpawns	du	'NotifyPuzzleSpawns', 0
+strHiddenCubeSoundVolumePercentage	du	'HiddenCubeSoundVolumePercentage', 0
 strMod		du	'Mod', 0
 strVersion	du	'Version', 0
 strPakFileHash	du	'PakFileHash', 0
@@ -2783,6 +2832,7 @@ end if
 max_backups	dd	?
 backup_period	dd	?
 last_backup_time	dd	?
+hiddencube_sound_volume	dd	?
 backup_made	db	?
 use_temporary_file db	?
 show_nearest_unsolved	db	?
