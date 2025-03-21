@@ -114,7 +114,11 @@ gridsolve_expected = 0x840F000478800000
 
 hiddencube_makesoundevent_offset = 0x13FE69C
 hiddencube_makesoundevent_expected = 0x01B8410000050887
+hiddencube_vmt_EndPlay_offset = 0x4588EE0
+hiddencube_EndPlay_expected = 0xFA8B4430EC834857
+EventInstanceIsValid_offset = 0x0DA3F10
 EventInstanceSetVolume_offset = 0x0DA42A0
+EventInstanceStop_offset = 0xDA42F0
 
 ASandboxGameMode_vmt_Tick_offset = 0x468C3B8
 ASandboxGameMode_Tick_expected = 0xA486FF41
@@ -818,7 +822,33 @@ end if
 .done_spawnnotify_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
 .skip_spawnnotify_patch:
-	add	rdi, hiddencube_makesoundevent_offset-spawnnotify_patch1_offset
+	add	rdi, hiddencube_vmt_EndPlay_offset-spawnnotify_patch1_offset
+	mov	cl, 1
+	mov	rdx, [rdi]
+	mov	[APuzzleBase_EndPlay], rdx
+	lea	rax, [rdx+hiddencube_vmt_EndPlay_offset]
+	sub	rax, rdi
+	cmp	rax, expected_image_size
+	jae	.done_hiddencube_endplaypatch
+	mov	rax, hiddencube_EndPlay_expected
+	cmp	[rdx+0Bh], rax
+	jnz	.done_hiddencube_endplaypatch
+	lea	rax, [rdi+EventInstanceIsValid_offset-hiddencube_vmt_EndPlay_offset]
+	mov	[EventInstanceIsValid], rax
+	add	rax, EventInstanceSetVolume_offset-EventInstanceIsValid_offset
+	mov	[EventInstanceSetVolume], rax
+	add	rax, EventInstanceStop_offset-EventInstanceSetVolume_offset
+	mov	[EventInstanceStop], rax
+	call	make_writable
+	lea	rax, [hook_AHiddenCube_EndPlay]
+	mov	[rdi], rax
+	call	restore_protection
+	mov	cl, 0
+.done_hiddencube_endplaypatch:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
+	add	rdi, hiddencube_makesoundevent_offset-hiddencube_vmt_EndPlay_offset
+	test	cl, cl
+	jnz	.skip_hiddencube_soundpatch
 	lea	rcx, [strGameplay]
 	lea	rdx, [strHiddenCubeSoundVolumePercentage]
 	or	r8d, -1
@@ -2387,14 +2417,30 @@ hook_gridsolve_check:
 	jmp	[gridsolve_continue2]
 .end:
 
+hook_AHiddenCube_EndPlay:
+	sub	rsp, 28h
+	mov	[rsp+20h], rcx
+	mov	rcx, [rcx+508h]
+	call	[EventInstanceIsValid]
+	test	al, al
+	jz	.done
+	mov	rcx, [rsp+20h]
+	mov	rcx, [rcx+508h]
+	xor	edx, edx
+	call	[EventInstanceStop]
+.done:
+	mov	rcx, [rsp+20h]
+	add	rsp, 28h
+	db	48h
+	jmp	[APuzzleBase_EndPlay]
+.end:
+
 hook_AHiddenCube_makesoundevent:
 	sub	rsp, 28h
 	mov	rbx, rax
 	mov	rcx, rax
 	movss	xmm1, [hiddencube_sound_volume]
-	mov	rax, [rsp+28h]
-	add	rax, EventInstanceSetVolume_offset - (0x13FE69C + 12)
-	call	rax
+	call	[EventInstanceSetVolume]
 	mov	rax, rbx
 	mov	[rdi+508h], rax
 	mov	r8d, 1
@@ -2464,6 +2510,8 @@ end if
 	dd	rva hook_savesolvedtime1, rva hook_savesolvedtime1.end, rva hook_savesolvedtime1_unwind
 	dd	rva hook_savesolvedtime2, rva hook_savesolvedtime2.end, rva hook_savesolvedtime2_unwind
 	dd	rva hook_gridsolve_check, rva hook_gridsolve_check.end, rva hook_gridsolve_check_unwind
+	dd	rva hook_AHiddenCube_EndPlay, rva hook_AHiddenCube_EndPlay.end, rva make_writable_unwind
+	dd	rva hook_AHiddenCube_makesoundevent, rva hook_AHiddenCube_makesoundevent.end, rva make_writable_unwind
 end data
 
 macro start_unwind_data {
@@ -2803,6 +2851,10 @@ savesolvedtime1_continue	dq	?
 savesolvedtime2_continue	dq	?
 gridsolve_continue1	dq	?
 gridsolve_continue2	dq	?
+APuzzleBase_EndPlay	dq	?
+EventInstanceIsValid	dq	?
+EventInstanceSetVolume	dq	?
+EventInstanceStop	dq	?
 
 if add_chests
 original_initgamemode	dq	?
