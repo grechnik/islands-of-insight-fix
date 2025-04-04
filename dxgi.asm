@@ -120,6 +120,15 @@ EventInstanceIsValid_offset = 0x0DA3F10
 EventInstanceSetVolume_offset = 0x0DA42A0
 EventInstanceStop_offset = 0xDA42F0
 
+sophiarune_vmt800_offset = 0x45B2DE0
+sophiarune_vmt800_expected = 0x05AD81B6
+weakobjectptr_get_offset = 0x195D240
+weakobjectptr_get_expected = 0x40F70D75
+weakobjectptr_assign_offset = 0x195AA90
+weakobjectptr_assign_expected = 0x11890C52
+StaticLoadObject_offset = 0x194F770
+StaticLoadObject_expected = 0xF9E824AC
+
 ASandboxGameMode_vmt_Tick_offset = 0x468C3B8
 ASandboxGameMode_Tick_expected = 0xA486FF41
 ASandboxGameMode_vmt_InitGameMode_offset = 0x468C8A0
@@ -166,6 +175,7 @@ virtual at 0
 .func	dd	?
 .tmp2	dd	?
 .patch_failed	db	?
+.need_sophiarune_marker	db	?
 	align 2
 .tmp	dd	?	; used by make_writable/restore_protection
 .orig_dll_name:
@@ -219,7 +229,6 @@ end virtual
 	mov	rax, 0x0069006E0069002E	; .ini
 	stosq
 	and	word [rdi], 0
-; patch function that saves player's location/rotation
 	xor	ecx, ecx
 	mov	[rbx + .patch_failed - .orig_dll_name], cl
 	call	[GetModuleHandleW]
@@ -459,6 +468,7 @@ end virtual
 	mov	r9, rbx
 	call	[GetPrivateProfileIntW]
 	mov	[show_nearest_unsolved], al
+	mov	[rbx + .need_sophiarune_marker - .orig_dll_name], al
 	lea	rcx, [strGameplay]
 	lea	rdx, [strShowNearestLogicGrid]
 	xor	r8d, r8d
@@ -886,6 +896,7 @@ if add_chests
 	test	eax, eax
 	jz	.skip_chests_patch2
 	mov	cl, 1
+	or	[rbx + .need_sophiarune_marker - .orig_dll_name], cl
 	mov	rdx, [rdi+ASandboxGameMode_vmt_InitGameMode_offset-hiddencube_makesoundevent_offset]
 	mov	[original_initgamemode], rdx
 	lea	rax, [rdx+hiddencube_makesoundevent_offset]
@@ -1035,7 +1046,39 @@ end virtual
 	or	[rbx + .patch_failed - .orig_dll_name], cl
 .skip_chests_patch2:
 end if
-	add	rdi, giskraken_init_offset - hiddencube_makesoundevent_offset
+	add	rdi, sophiarune_vmt800_offset - hiddencube_makesoundevent_offset
+	cmp	byte [rbx + .need_sophiarune_marker - .orig_dll_name], 0
+	jz	.skip_sophiarune_marker
+	mov	cl, 1
+	mov	rdx, [rdi]
+	mov	[sophiarune_vmt800], rdx
+	lea	rax, [rdx+sophiarune_vmt800_offset]
+	sub	rax, rdi
+	cmp	rax, expected_image_size
+	jae	.done_sophiarune_marker
+	cmp	dword [rdx+3Ah], sophiarune_vmt800_expected
+	jnz	.done_sophiarune_marker
+	lea	rax, [rdi+weakobjectptr_get_offset-sophiarune_vmt800_offset]
+	cmp	dword [rax+48h], weakobjectptr_get_expected
+	jnz	.done_sophiarune_marker
+	mov	[weakobjectptr_get], rax
+	add	rax, weakobjectptr_assign_offset - weakobjectptr_get_offset
+	cmp	dword [rax+0Fh], weakobjectptr_assign_expected
+	jnz	.done_sophiarune_marker
+	mov	[weakobjectptr_assign], rax
+	add	rax, StaticLoadObject_offset - weakobjectptr_assign_offset
+	cmp	dword [rax+0Fh], StaticLoadObject_expected
+	jnz	.done_sophiarune_marker
+	mov	[StaticLoadObject], rax
+	call	make_writable
+	lea	rax, [hook_sophiarune_vmt800]
+	mov	[rdi], rax
+	call	restore_protection
+	mov	cl, 0
+.done_sophiarune_marker:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
+.skip_sophiarune_marker:
+	add	rdi, giskraken_init_offset - sophiarune_vmt800_offset
 	mov	rax, giskraken_init_expected
 	mov	cl, 1
 	cmp	[rdi], rax
@@ -2448,6 +2491,74 @@ hook_AHiddenCube_makesoundevent:
 	ret
 .end:
 
+hook_sophiarune_vmt800:
+	push	rbx
+.prolog_offs1 = $ - hook_sophiarune_vmt800
+	push	rsi
+.prolog_offs2 = $ - hook_sophiarune_vmt800
+	push	rdi
+.prolog_offs3 = $ - hook_sophiarune_vmt800
+	sub	rsp, 40h
+.prolog_offs4 = $ - hook_sophiarune_vmt800
+.prolog_size = $ - hook_sophiarune_vmt800
+	mov	rbx, rcx
+	call	[sophiarune_vmt800]
+	mov	rdx, [rbx+6A0h]	; ASophiaRune::PuzzleGrid
+	mov	eax, [rdx+690h]	; length of modifiers array
+	mov	rdx, [rdx+688h]	; pointers to modifiers array
+	cmp	eax, 2	; EModifierType__CompleteThePattern
+	jbe	.done
+	lea	rsi, [extra_grid_icons]
+	lea	rdi, [pattern_grid_icon_resource]
+	cmp	byte [rdx+2], 0
+	jnz	.load_icon
+	add	rsi, 8
+	add	rdi, music_grid_icon_resource - pattern_grid_icon_resource
+	cmp	eax, 4	; EModifierType__MatchTheAudio
+	jbe	.done
+	cmp	byte [rdx+4], 0
+	jnz	.load_icon
+	add	rsi, 8
+	add	rdi, memory_grid_icon_resource - music_grid_icon_resource
+	cmp	eax, 12	; EModifierType__Memory
+	jbe	.done
+	cmp	byte [rdx+12], 0
+	jz	.done
+.load_icon:
+	mov	rcx, rsi
+	call	[weakobjectptr_get]
+	test	rax, rax
+	jnz	.set_icon
+	xor	edx, edx
+	mov	[rsp+38h], rdx
+	mov	byte [rsp+30h], 1
+	mov	[rsp+28h], rdx
+	mov	[rsp+20h], edx
+	mov	rcx, [rbx+268h+58h]	; PuzzleTypeData.ScreenMarkerIcon
+	test	rcx, rcx
+	jz	.done
+	xor	r9d, r9d
+	mov	r8, rdi
+	mov	rcx, [rcx+10h]	; UTexture2D class
+	call	[StaticLoadObject]
+	test	rax, rax
+	jz	.done
+	mov	rdi, rax
+	mov	rdx, rax
+	mov	rcx, rsi
+	call	[weakobjectptr_assign]
+	mov	rax, rdi
+.set_icon:
+	mov	[rbx+268h+58h], rax	; PuzzleTypeData.ScreenMarkerIcon
+	mov	[rbx+268h+60h], rax	; PuzzleTypeData.MapMarkerIcon
+.done:
+	add	rsp, 40h
+	pop	rdi
+	pop	rsi
+	pop	rbx
+	ret
+.end:
+
 section '.rdata' data readable
 ; 100.0 to convert meters -> UE units, 2**-31 to deal with our random method
 hide_radius_multiplier	dd	0x33480000, 0x33480000, 0x33480000, 0
@@ -2455,6 +2566,7 @@ zw_sign	dd	0, 0, 0x80000000, 0x80000000
 yz_sign	dd	0, 0x80000000, 0x80000000, 0
 z_one	dd	0, 0, 1.0, 0
 emptystring	dq	0, 0
+
 logic_grid_and_like_offset	dd	240.0
 if add_chests
 opened_chest_lifetime	dd	10.0
@@ -2512,6 +2624,7 @@ end if
 	dd	rva hook_gridsolve_check, rva hook_gridsolve_check.end, rva hook_gridsolve_check_unwind
 	dd	rva hook_AHiddenCube_EndPlay, rva hook_AHiddenCube_EndPlay.end, rva make_writable_unwind
 	dd	rva hook_AHiddenCube_makesoundevent, rva hook_AHiddenCube_makesoundevent.end, rva make_writable_unwind
+	dd	rva hook_sophiarune_vmt800, rva hook_sophiarune_vmt800.end, rva hook_sophiarune_vmt800_unwind
 end data
 
 macro start_unwind_data {
@@ -2744,6 +2857,14 @@ start_unwind_data
 	db	0, 0C0h	; UWOP_PUSH_NONVOL r12
 	db	0, 50h	; UWOP_PUSH_NONVOL rbp
 end_unwind_data
+hook_sophiarune_vmt800_unwind:
+	db	1, hook_sophiarune_vmt800.prolog_size, hook_sophiarune_vmt800_unwind.size / 2, 0
+start_unwind_data
+	db	hook_sophiarune_vmt800.prolog_offs4, 2 + ((40h - 8) / 8) * 10h	; UWOP_ALLOC_SMALL for 40h bytes
+	db	hook_sophiarune_vmt800.prolog_offs3, 70h	; UWOP_PUSH_NONVOL rdi
+	db	hook_sophiarune_vmt800.prolog_offs2, 60h	; UWOP_PUSH_NONVOL rsi
+	db	hook_sophiarune_vmt800.prolog_offs1, 30h	; UWOP_PUSH_NONVOL rbx
+end_unwind_data
 
 align 4
 fixups_start = $
@@ -2818,6 +2939,10 @@ strMod		du	'Mod', 0
 strVersion	du	'Version', 0
 strPakFileHash	du	'PakFileHash', 0
 
+pattern_grid_icon_resource	du	"/Game/ASophia/UI/Common/Icons/PuzzleIcons/Pattern_Grid.Pattern_Grid", 0
+music_grid_icon_resource	du	"/Game/ASophia/UI/Common/Icons/PuzzleIcons/Music_Grid.Music_Grid", 0
+memory_grid_icon_resource	du	"/Game/ASophia/UI/Common/Icons/PuzzleIcons/Memory_Grid.Memory_Grid", 0
+
 section '.data' data readable writable
 hide_radius	rd	4
 current_marker_pos	rd	4
@@ -2855,6 +2980,11 @@ APuzzleBase_EndPlay	dq	?
 EventInstanceIsValid	dq	?
 EventInstanceSetVolume	dq	?
 EventInstanceStop	dq	?
+extra_grid_icons	rq	3
+weakobjectptr_get	dq	?
+weakobjectptr_assign	dq	?
+StaticLoadObject	dq	?
+sophiarune_vmt800	dq	?
 
 if add_chests
 original_initgamemode	dq	?
