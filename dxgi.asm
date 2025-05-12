@@ -2391,13 +2391,9 @@ hook_savesolvedtime1:
 	comiss	xmm6, [rbp+0D8h]
 	jb	.passthrough
 .skipupdate:
-	mov	rcx, [rax]
-	call	[fmemory_free]
-	mov	rcx, [rbp-48h]
-	call	[fmemory_free]
-	mov	rax, [savesolvedtime1_continue]
-	add	rax, 5
-	jmp	rax
+	mov	edx, [rbp+0D8h]
+	mov	[rsp+20h], edx
+	jmp	.passthrough
 .racingring:
 	comiss	xmm6, [rbp+0D8h]
 	jb	.skipupdate
