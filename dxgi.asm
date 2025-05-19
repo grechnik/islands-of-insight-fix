@@ -889,7 +889,7 @@ end if
 ; should be the last code that works with .ini
 if add_chests
 	lea	rcx, [strGameplay]
-	lea	rdx, [strAddChests]
+	lea	rdx, [strEnablePuzzleRadar]
 	xor	r8d, r8d
 	mov	r9, rbx
 	call	[GetPrivateProfileIntW]
@@ -916,54 +916,84 @@ if add_chests
 	mov	[original_gamemode_tick], rdx
 	mov	rdx, [rbx + .directory_end - .orig_dll_name]
 virtual at 0
-	du	'chests.bin', 0, 0
-assert $ = 18h
-load chests_bin_qword0 qword from 0
-load chests_bin_qword8 qword from 8
-load chests_bin_qword10 qword from 10h
+	du	'puzzleradar.bin', 0
+assert $ = 20h
+load puzzleradar_bin_qword0 qword from 0
+load puzzleradar_bin_qword8 qword from 8
+load puzzleradar_bin_qword10 qword from 10h
+load puzzleradar_bin_qword18 qword from 18h
 end virtual
-	mov	rax, chests_bin_qword0
+	mov	rax, puzzleradar_bin_qword0
 	mov	[rdx], rax
-	mov	rax, chests_bin_qword8
+	mov	rax, puzzleradar_bin_qword8
 	mov	[rdx+8], rax
-	mov	rax, chests_bin_qword10
+	mov	rax, puzzleradar_bin_qword10
 	mov	[rdx+10h], rax
+	mov	rax, puzzleradar_bin_qword18
+	mov	[rdx+18h], rax
 	lea	rax, [rdi+FFileHelper_LoadFileToArray_offset-hiddencube_makesoundevent_offset]
-	lea	rcx, [chests_bin_data]
+	lea	rcx, [puzzleradar_bin_data]
 	mov	rdx, rbx
 	xor	r8d, r8d
 	call	rax
 	test	al, al
-	jz	.chests_bin_failed
-	lea	rax, [chests_by_zone]
-	mov	r8, qword [rax+chests_bin_data-chests_by_zone]
+	jz	.puzzleradar_bin_failed
+	lea	r9, [chests_by_zone]
+	cmp	dword [r9-chests_by_zone+puzzleradar_bin_data+8], 10h + 10h*num_zones
+	jb	.puzzleradar_bin_failed
+	mov	r8, qword [r9-chests_by_zone+puzzleradar_bin_data]
+	mov	cl, num_zones
+	xor	edx, edx
+	xor	r11d, r11d
+.puzzleradar_preprocess:
+	mov	eax, [r8+18h]
+	mov	[r9], edx
+	mov	[r9+4], eax
+	add	edx, eax
+	jc	.puzzleradar_bin_failed
+	add	r8, 10h
+	add	r9, 8
+	movss	xmm0, [r8]
+	maxss	xmm0, dword [z_one]	; constant zero
+	addss	xmm0, dword [r8+4]
+	maxss	xmm0, dword [z_one]
+	cvttss2si r10d, xmm0
+	add	r11d, r10d
+	dec	cl
+	jnz	.puzzleradar_preprocess
+	cmp	edx, [r8-num_zones*10h+4]
+	jnz	.puzzleradar_bin_failed
+	cmp	edx, 1000000h
+	jae	.puzzleradar_bin_failed
+	shl	edx, 5
+	add	edx, 10h + 10h*num_zones
+	cmp	edx, dword [r9-chests_by_zone-num_zones*8+puzzleradar_bin_data+8]
+	jz	.puzzleradar_bin_ok
+.puzzleradar_bin_failed:
 	xor	ecx, ecx
-	cmp	dword [rax+chests_bin_data+8-chests_by_zone], ecx
-	jz	.chests_bin_failed
-	mov	r9d, first_zone
-.chests_bin_loop:
-	mov	edx, [r8+rcx]
-	cmp	edx, r9d
-	jb	.chests_bin_failed
-	jz	@f
-	cmp	edx, first_zone + num_zones
-	jae	.chests_bin_failed
-	mov	[rax+(rdx-first_zone)*8], ecx
-	mov	r9d, edx
-@@:
-	inc	dword [rax+(rdx-first_zone)*8+4]
-	add	ecx, 20h
-	cmp	ecx, dword [rax+chests_bin_data+8-chests_by_zone]
-	jb	.chests_bin_loop
-	jz	.chests_bin_ok
-.chests_bin_failed:
-	xor	ecx, ecx
-	lea	rdx, [bad_chests_text]
-	lea	r8, [bad_chests_caption]
+	lea	rdx, [bad_puzzleradar_text]
+	lea	r8, [bad_puzzleradar_caption]
 	lea	r9, [rcx+MB_OK+MB_ICONSTOP]
 	call	[MessageBoxA]
 	jmp	.skip_chests_patch2
-.chests_bin_ok:
+.puzzleradar_bin_ok:
+	mov	[max_chests], r11d
+	call	[GetProcessHeap]
+	mov	rcx, rax
+	mov	edx, HEAP_ZERO_MEMORY
+	mov	r8d, [max_chests]
+	imul	r8, spawned_chest_struct.sizeof
+	call	[HeapAlloc]
+	mov	[spawned_chests], rax
+	test	rax, rax
+	jnz	@f
+	xor	ecx, ecx
+	lea	rdx, [generic_error_text]
+	lea	r8, [generic_error_caption]
+	lea	r9, [rcx+MB_OK+MB_ICONSTOP]
+	call	[MessageBoxA]
+	jmp	.skip_chests_patch2
+@@:
 	lea	rax, [rdi+GetSophiaCharacterFromWorld_offset-hiddencube_makesoundevent_offset]
 	mov	[GetSophiaCharacterFromWorld], rax
 	add	rax, GetAllPuzzleDataInZone_offset-GetSophiaCharacterFromWorld_offset
@@ -1827,8 +1857,8 @@ additional_markers:
 if debug_chests
 	cmp	[add_chests_marker], 0
 	jz	.no_chests_marker
-	lea	rdx, [spawned_chests]
-	mov	ecx, [rdx+total_spawned_chests-spawned_chests]
+	mov	rdx, [spawned_chests]
+	mov	ecx, [total_spawned_chests]
 	test	ecx, ecx
 	jz	.no_chests_marker
 	mov	rax, [r12+0A0h]	; UActorComponent::OwnerPrivate
@@ -2021,8 +2051,8 @@ hook_gamemode_tick:
 .prolog_size = $ - hook_gamemode_tick
 	mov	[rsp+20h], rcx
 	movss	[rsp+40h], xmm1
-	lea	rsi, [spawned_chests]
-	mov	ebx, dword [rsi-spawned_chests+total_spawned_chests]
+	mov	rsi, [spawned_chests]
+	mov	ebx, [total_spawned_chests]
 	test	ebx, ebx
 	jz	.done
 .loop:
@@ -2094,13 +2124,11 @@ spawn_chests_if_needed:
 	call	[GetSophiaCharacterFromWorld]
 	test	al, al
 	jz	.fail
-	mov	ebx, 2
+	mov	ebx, first_zone
 .zoneloop:
 	lea	rsi, [chests_by_zone]
-	mov	eax, dword [rsi-chests_by_zone+num_spawned_chests_by_zone+(rbx-2)*4]
-	test	eax, eax
-	jnz	.nextzone
-	cmp	[rsi+(rbx-2)*8+4], eax
+	mov	eax, dword [rsi-chests_by_zone+num_spawned_chests_by_zone+(rbx-first_zone)*4]
+	cmp	[rsi+(rbx-first_zone)*8+4], eax
 	jbe	.nextzone
 	mov	rcx, [rdi+180h]	; OwningGameInstance
 	mov	rcx, [rcx+218h]	; PuzzleDatabase
@@ -2112,8 +2140,6 @@ spawn_chests_if_needed:
 	mov	rcx, [rax]
 	call	[fmemory_free]
 	mov	esi, [rbp+8]
-	add	esi, esi
-	lea	esi, [rsi*5]
 	mov	rcx, [rdi+180h]
 	mov	rcx, [rcx+218h]
 	mov	rdx, rbp
@@ -2123,19 +2149,27 @@ spawn_chests_if_needed:
 	call	[fmemory_free]
 	cmp	dword [rbp+8], 0
 	jz	.nextzone
-	mov	eax, esi
-	xor	edx, edx
-	div	dword [rbp+8]
-	cmp	eax, 3
-	jb	.nextzone
+	cvtsi2ss xmm0, esi
+	cvtsi2ss xmm1, dword [rbp+8]
+	divss	xmm0, xmm1
+	mov	eax, ebx
+	shl	eax, 4
+	add	rax, [puzzleradar_bin_data]
+	mulss	xmm0, [rax-first_zone*10h+10h]
+	addss	xmm0, [rax-first_zone*10h+10h+4]
+	cvttss2si eax, xmm0
+	mov	[rbp+40h], eax
+.spawnloop:
 	lea	rsi, [chests_by_zone]
+	cmp	eax, dword [rsi-chests_by_zone+num_spawned_chests_by_zone+(rbx-first_zone)*4]
+	jbe	.nextzone
 .findplace:
 	call	[rand]
-	mul	dword [rsi+(rbx-2)*8+4]
+	mul	dword [rsi+(rbx-first_zone)*8+4]
 	shrd	eax, edx, 15
+	add	eax, [rsi+(rbx-first_zone)*8]
 	shl	eax, 5
-	add	eax, [rsi+(rbx-2)*8]
-	lea	r8, [rsi+spawned_chests-chests_by_zone]
+	mov	r8, qword [rsi+spawned_chests-chests_by_zone]
 	mov	ecx, dword [rsi+total_spawned_chests-chests_by_zone]
 	test	ecx, ecx
 	jz	.placeok
@@ -2161,14 +2195,15 @@ spawn_chests_if_needed:
 	add	rcx, 470h ; ItemPickupClass
 	call	[FSoftObjectPtr_LoadSynchronous]
 	mov	rdx, rax
-	lea	r8, [rsi+8]
-	add	r8, [chests_bin_data]
+	lea	r8, [rsi+10h+10h*num_zones+8]
+	add	r8, [puzzleradar_bin_data]
 	lea	r9, [r8+0Ch]
 	mov	rcx, rdi
 	call	[UWorld_SpawnActor]
 	lea	rdx, [spawned_chests]
-	inc	[rdx-spawned_chests+num_spawned_chests_by_zone+(rbx-2)*4]
-	mov	ecx, [rdx+total_spawned_chests-spawned_chests]
+	inc	dword [rdx-spawned_chests+num_spawned_chests_by_zone+(rbx-first_zone)*4]
+	mov	ecx, dword [rdx+total_spawned_chests-spawned_chests]
+	mov	rdx, [rdx]
 	test	ecx, ecx
 	jz	.newchestinfo
 .findfreechestinfo:
@@ -2182,6 +2217,9 @@ spawn_chests_if_needed:
 	jnz	.findfreechestinfo
 .newchestinfo:
 	inc	[total_spawned_chests]
+	dec	[max_chests]
+	jns	.storechestinfo
+	ud2
 .storechestinfo:
 	mov	[rdx+spawned_chest_struct.chest], rax
 	mov	rcx, [rax+130h]
@@ -2205,6 +2243,8 @@ spawn_chests_if_needed:
 	mov	dl, 11
 	call	[UDefaultItems_GetDefaultItem]
 	mov	[rsi+28h], rax
+	mov	eax, [rbp+40h]
+	jmp	.spawnloop
 .nextzone:
 	inc	ebx
 	cmp	bl, first_zone + num_zones
@@ -2888,10 +2928,15 @@ error_pak_file_text:
 mismatch_pak_file_text:
 	db	"Please re-download and re-install the latest version of Offline Restored Mod", 0
 
-bad_chests_caption:
-	db	'Offline Restored Mod: bad chests.bin file', 0
-bad_chests_text:
-	db	'AddChests is on, but chests.bin is missing or broken. Reinstall the mod or disable AddChests', 0
+bad_puzzleradar_caption:
+	db	'Offline Restored Mod: bad puzzleradar.bin file', 0
+bad_puzzleradar_text:
+	db	'EnablePuzzleRadar is on, but puzzleradar.bin is missing or broken. Reinstall the mod or turn off EnablePuzzleRadar', 0
+
+generic_error_text:
+	db	'Something went wrong', 0
+generic_error_caption:
+	db	'Generic error', 0
 
 if add_chests
 strBP_ManualRosary_C	db	'BP_ManualRosary_C', 0
@@ -2923,7 +2968,7 @@ strShowNearestLogicGrid	du	'ShowNearestLogicGrid', 0
 strMinLogicGridDifficulty	du	'MinLogicGridDifficulty', 0
 strHackMatchboxRadar	du	'HackMatchboxRadar', 0
 if add_chests
-strAddChests	du	'AddChests', 0
+strEnablePuzzleRadar	du	'EnablePuzzleRadar', 0
 end if
 if debug_chests
 strAddChestsMarker	du	'AddChestsMarker', 0
@@ -3000,11 +3045,12 @@ USceneComponent_SetRelativeScale3D	dq	?
 AActor_Destroy	dq	?
 FName_BP_ManualRosary_C	dq	?
 
-chests_bin_data	rq	2
+spawned_chests	dq	?
+puzzleradar_bin_data	rq	2
 chests_by_zone	rd	num_zones*2
 total_spawned_chests	dd	?
+max_chests	dd	?
 num_spawned_chests_by_zone	rd	num_zones
-spawned_chests:	rb	num_zones * spawned_chest_struct.sizeof
 end if
 
 max_backups	dd	?
