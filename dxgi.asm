@@ -129,6 +129,14 @@ weakobjectptr_assign_expected = 0x11890C52
 StaticLoadObject_offset = 0x194F770
 StaticLoadObject_expected = 0xF9E824AC
 
+clusterpuzzles_patch_offset = 0x14B5067
+clusterpuzzles_patch_expected1 = 0x0D590FF3
+clusterpuzzles_patch_expected2 = 0xC12C0FF3
+UGISProgression_GetFromWorld_offset = 0x1238EC0
+UGISProgression_GetFromWorld_expected = 0x000180B98B4820
+GetSophiaCharacterFromWorld_offset = 0x1344A90
+GetSophiaCharacterFromWorld_expected = 0x13840FC98548D98B
+
 ASandboxGameMode_vmt_Tick_offset = 0x468C3B8
 ASandboxGameMode_Tick_expected = 0xA486FF41
 ASandboxGameMode_vmt_InitGameMode_offset = 0x468C8A0
@@ -140,7 +148,6 @@ findmarkerclass_expected = 0xE8CE8B48000000E0
 ARacingBalls_AppendLocationMarkers_offset = 0x142CDEE
 ARacingBalls_AppendLocationMarkers_expected = 0x8C0F000005E8BF3B
 FFileHelper_LoadFileToArray_offset = 0x16F8F10
-GetSophiaCharacterFromWorld_offset = 0x1344A90
 GetAllPuzzleDataInZone_offset = 0x14AEE20
 GetAllSolvedPuzzleDataInZone_offset = 0x14AFDA0
 FActorSpawnParameters_ctr_offset = 0x35723C0
@@ -158,7 +165,7 @@ num_zones = 5
 
 patch_liars_modifier = 0
 add_chests = 1
-debug_chests = 1
+debug_chests = 0
 
 section '.text' code readable executable
 
@@ -832,7 +839,81 @@ end if
 .done_spawnnotify_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
 .skip_spawnnotify_patch:
-	add	rdi, hiddencube_vmt_EndPlay_offset-spawnnotify_patch1_offset
+	add	rdi, bestsolvetime1_offset - spawnnotify_patch1_offset
+	mov	cl, 1
+	cmp	[fmemory_free], 0
+	jz	.done_bestsolvetime_patch
+	mov	rax, bestsolvetime1_expected
+	cmp	[rdi], rax
+	jnz	.done_bestsolvetime_patch
+	mov	rax, bestsolvetime2_expected
+	cmp	[rdi - bestsolvetime1_offset + bestsolvetime2_offset], rax
+	jnz	.done_bestsolvetime_patch
+	lea	rdx, [rdi - bestsolvetime1_offset + getpuzzlesolvestatus_offset]
+	mov	rax, getpuzzlesolvestatus_expected
+	cmp	[rdx+10h], rax
+	jnz	.done_bestsolvetime_patch
+	mov	[getpuzzlesolvestatus], rdx
+	lea	rax, [rdi+13]
+	mov	[savesolvedtime1_continue], rax
+	call	make_writable
+	mov	word [rdi], 0xB948
+	lea	rax, [hook_savesolvedtime1]
+	mov	[rdi+2], rax
+	mov	word [rdi+10], 0xE1FF
+	call	restore_protection
+	sub	rdi, bestsolvetime1_offset - bestsolvetime2_offset
+	lea	rax, [rdi+14]
+	mov	[savesolvedtime2_continue], rax
+	call	make_writable
+	mov	word [rdi], 0xB948
+	lea	rax, [hook_savesolvedtime2]
+	mov	[rdi+2], rax
+	mov	word [rdi+10], 0xE1FF
+	call	restore_protection
+	add	rdi, bestsolvetime1_offset - bestsolvetime2_offset
+	mov	cl, 0
+.done_bestsolvetime_patch:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
+	lea	rax, [rdi+GetSophiaCharacterFromWorld_offset-bestsolvetime1_offset]
+	mov	rdx, GetSophiaCharacterFromWorld_expected
+	cmp	[rax+13h], rdx
+	jnz	@f
+	mov	[GetSophiaCharacterFromWorld], rax
+@@:
+	add	rdi, clusterpuzzles_patch_offset - bestsolvetime1_offset
+	lea	rcx, [strGameplay]
+	lea	rdx, [strPreferUnsolvedClusterPuzzles]
+	xor	r8d, r8d
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	test	eax, eax
+	jz	.skip_clusterpuzzles_patch
+	mov	cl, 1
+	cmp	dword [rdi], clusterpuzzles_patch_expected1
+	jnz	.done_clusterpuzzles_patch
+	cmp	dword [rdi+8], clusterpuzzles_patch_expected2
+	jnz	.done_clusterpuzzles_patch
+	cmp	[getpuzzlesolvestatus], 0
+	jz	.done_clusterpuzzles_patch
+	cmp	[GetSophiaCharacterFromWorld], 0
+	jz	.done_clusterpuzzles_patch
+	lea	rax, [rdi+UGISProgression_GetFromWorld_offset-clusterpuzzles_patch_offset]
+	mov	rdx, UGISProgression_GetFromWorld_expected
+	cmp	[rax+9], rdx
+	jnz	.done_clusterpuzzles_patch
+	mov	[UGISProgression_GetFromWorld], rax
+	call	make_writable
+	mov	word [rdi], 0xB848
+	lea	rax, [clusterpuzzles_hook]
+	mov	[rdi+2], rax
+	mov	word [rdi+10], 0xD0FF
+	call	restore_protection
+	mov	cl, 0
+.done_clusterpuzzles_patch:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
+.skip_clusterpuzzles_patch:
+	add	rdi, hiddencube_vmt_EndPlay_offset-clusterpuzzles_patch_offset
 	mov	cl, 1
 	mov	rdx, [rdi]
 	mov	[APuzzleBase_EndPlay], rdx
@@ -914,6 +995,8 @@ if add_chests
 	cmp	dword [rdx+25h], ASandboxGameMode_Tick_expected
 	jnz	.done_chests_patch2
 	mov	[original_gamemode_tick], rdx
+	cmp	[GetSophiaCharacterFromWorld], 0
+	jz	.done_chests_patch2
 	mov	rdx, [rbx + .directory_end - .orig_dll_name]
 virtual at 0
 	du	'puzzleradar.bin', 0
@@ -994,9 +1077,7 @@ end virtual
 	call	[MessageBoxA]
 	jmp	.skip_chests_patch2
 @@:
-	lea	rax, [rdi+GetSophiaCharacterFromWorld_offset-hiddencube_makesoundevent_offset]
-	mov	[GetSophiaCharacterFromWorld], rax
-	add	rax, GetAllPuzzleDataInZone_offset-GetSophiaCharacterFromWorld_offset
+	lea	rax, [rdi+GetAllPuzzleDataInZone_offset-hiddencube_makesoundevent_offset]
 	mov	[GetAllPuzzleDataInZone], rax
 	add	rax, GetAllSolvedPuzzleDataInZone_offset-GetAllPuzzleDataInZone_offset
 	mov	[GetAllSolvedPuzzleDataInZone], rax
@@ -1131,43 +1212,7 @@ end if
 	mov	cl, 0
 .done_giskraken_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
-	add	rdi, bestsolvetime1_offset - giskraken_init_offset
-	mov	cl, 1
-	cmp	[fmemory_free], 0
-	jz	.done_bestsolvetime_patch
-	mov	rax, bestsolvetime1_expected
-	cmp	[rdi], rax
-	jnz	.done_bestsolvetime_patch
-	mov	rax, bestsolvetime2_expected
-	cmp	[rdi - bestsolvetime1_offset + bestsolvetime2_offset], rax
-	jnz	.done_bestsolvetime_patch
-	lea	rdx, [rdi - bestsolvetime1_offset + getpuzzlesolvestatus_offset]
-	mov	rax, getpuzzlesolvestatus_expected
-	cmp	[rdx+10h], rax
-	jnz	.done_bestsolvetime_patch
-	mov	[getpuzzlesolvestatus], rdx
-	lea	rax, [rdi+13]
-	mov	[savesolvedtime1_continue], rax
-	call	make_writable
-	mov	word [rdi], 0xB948
-	lea	rax, [hook_savesolvedtime1]
-	mov	[rdi+2], rax
-	mov	word [rdi+10], 0xE1FF
-	call	restore_protection
-	sub	rdi, bestsolvetime1_offset - bestsolvetime2_offset
-	lea	rax, [rdi+14]
-	mov	[savesolvedtime2_continue], rax
-	call	make_writable
-	mov	word [rdi], 0xB948
-	lea	rax, [hook_savesolvedtime2]
-	mov	[rdi+2], rax
-	mov	word [rdi+10], 0xE1FF
-	call	restore_protection
-	add	rdi, bestsolvetime1_offset - bestsolvetime2_offset
-	mov	cl, 0
-.done_bestsolvetime_patch:
-	or	[rbx + .patch_failed - .orig_dll_name], cl
-	add	rdi, gridsolve_offset - bestsolvetime1_offset
+	add	rdi, gridsolve_offset - giskraken_init_offset
 	mov	cl, 1
 	mov	rax, gridsolve_expected
 	cmp	[rdi+5], rax
@@ -2126,10 +2171,6 @@ spawn_chests_if_needed:
 	jz	.fail
 	mov	ebx, first_zone
 .zoneloop:
-	lea	rsi, [chests_by_zone]
-	mov	eax, dword [rsi-chests_by_zone+num_spawned_chests_by_zone+(rbx-first_zone)*4]
-	cmp	[rsi+(rbx-first_zone)*8+4], eax
-	jbe	.nextzone
 	mov	rcx, [rdi+180h]	; OwningGameInstance
 	mov	rcx, [rcx+218h]	; PuzzleDatabase
 	mov	rdx, rbp
@@ -2158,11 +2199,14 @@ spawn_chests_if_needed:
 	mulss	xmm0, [rax-first_zone*10h+10h]
 	addss	xmm0, [rax-first_zone*10h+10h+4]
 	cvttss2si eax, xmm0
+	lea	rsi, [chests_by_zone-first_zone*8+4]
+	cmp	[rsi+rbx*8], eax
+	cmovle	eax, [rsi+rbx*8]
 	mov	[rbp+40h], eax
 .spawnloop:
 	lea	rsi, [chests_by_zone]
 	cmp	eax, dword [rsi-chests_by_zone+num_spawned_chests_by_zone+(rbx-first_zone)*4]
-	jbe	.nextzone
+	jle	.nextzone
 .findplace:
 	call	[rand]
 	mul	dword [rsi+(rbx-first_zone)*8+4]
@@ -2595,6 +2639,81 @@ hook_sophiarune_vmt800:
 	ret
 .end:
 
+clusterpuzzles_hook:
+; r13 = [r15+18h] = count of puzzles in the pool, already checked >0
+; r14 = this+2D0h
+; [r15+10h] = pointer to array of UPuzzleData* from the pool
+	push	rbx
+.prolog_offs1 = $ - clusterpuzzles_hook
+	push	rbp
+.prolog_offs2 = $ - clusterpuzzles_hook
+	sub	rsp, 68h
+.prolog_offs3 = $ - clusterpuzzles_hook
+.prolog_size = $ - clusterpuzzles_hook
+	lea	rbp, [rsp+30h]
+; random shuffle of all puzzles
+	mov	ebx, r13d
+.shuffle_loop:
+	call	[rand]
+	mul	ebx
+	shrd	eax, edx, 15
+	mov	rcx, [r15+10h]
+	dec	ebx
+	mov	rdx, [rcx+rbx*8]
+	mov	r8, [rcx+rax*8]
+	mov	[rcx+rbx*8], r8
+	mov	[rcx+rax*8], rdx
+	jnz	.shuffle_loop
+; prepare pointers for the next stage; we'll need UGISProgression* and ASophiaCharacter*
+	lea	rcx, [r14-2D0h]
+	mov	rax, [rcx]
+	call	qword [rax+160h] ; get UWorld*
+	mov	rbx, rax
+	mov	rcx, rax
+	call	[UGISProgression_GetFromWorld]
+	mov	[rbp+28h], rax
+	mov	rcx, rbx
+	lea	rdx, [rbp+30h]
+	call	[GetSophiaCharacterFromWorld]
+	test	al, al
+	jz	.done
+; partition into unsolved and solved: move all solved to the end
+	xor	ebx, ebx
+.partition_loop:
+	mov	rax, [r15+10h]
+	mov	rax, [rax+rbx*8]
+	mov	rcx, [rbp+28h]	; UGISProgression* this
+	mov	rdx, rbp	; FPuzzleSolveData result
+	mov	r8, [rbp+30h]	; const ASophiaCharacter* Player
+	mov	r9d, [rax+38h]	; int32 KrakenId = UPuzzleData::KrakenId
+	lea	rax, [emptystring]
+	mov	[rbp-10h], rax	; const FString& LocalID
+	mov	[rbp-8], rax	; const FString& hackId
+	call	[getpuzzlesolvestatus]
+	mov	rcx, [rax+8]
+	call	[fmemory_free]
+	cmp	word [rbp], 1	; bSolved = true, bReset = false
+	jnz	.unsolved
+	dec	r13d
+	mov	rax, [r15+10h]
+	mov	rcx, [rax+rbx*8]
+	mov	rdx, [rax+r13*8]
+	mov	[rax+rbx*8], rdx
+	mov	[rax+r13*8], rcx
+	jmp	@f
+.unsolved:
+	inc	ebx
+@@:
+	cmp	ebx, r13d
+	jb	.partition_loop
+.done:
+	xor	eax, eax
+	add	rsp, 68h
+	pop	rbp
+	pop	rbx
+	ret
+.end:
+
 section '.rdata' data readable
 ; 100.0 to convert meters -> UE units, 2**-31 to deal with our random method
 hide_radius_multiplier	dd	0x33480000, 0x33480000, 0x33480000, 0
@@ -2661,6 +2780,7 @@ end if
 	dd	rva hook_AHiddenCube_EndPlay, rva hook_AHiddenCube_EndPlay.end, rva make_writable_unwind
 	dd	rva hook_AHiddenCube_makesoundevent, rva hook_AHiddenCube_makesoundevent.end, rva make_writable_unwind
 	dd	rva hook_sophiarune_vmt800, rva hook_sophiarune_vmt800.end, rva hook_sophiarune_vmt800_unwind
+	dd	rva clusterpuzzles_hook, rva clusterpuzzles_hook.end, rva clusterpuzzles_hook_unwind
 end data
 
 macro start_unwind_data {
@@ -2901,6 +3021,13 @@ start_unwind_data
 	db	hook_sophiarune_vmt800.prolog_offs2, 60h	; UWOP_PUSH_NONVOL rsi
 	db	hook_sophiarune_vmt800.prolog_offs1, 30h	; UWOP_PUSH_NONVOL rbx
 end_unwind_data
+clusterpuzzles_hook_unwind:
+	db	1, clusterpuzzles_hook.prolog_size, clusterpuzzles_hook_unwind.size / 2, 0
+start_unwind_data
+	db	clusterpuzzles_hook.prolog_offs3, 2 + ((68h - 8) / 8) * 10h	; UWOP_ALLOC_SMALL for 68h bytes
+	db	clusterpuzzles_hook.prolog_offs2, 50h	; UWOP_PUSH_NONVOL rbp
+	db	clusterpuzzles_hook.prolog_offs1, 30h	; UWOP_PUSH_NONVOL rbx
+end_unwind_data
 
 align 4
 fixups_start = $
@@ -2976,6 +3103,7 @@ end if
 strCheaperMusicForesight	du	'CheaperMusicForesight', 0
 strNotifyPuzzleSpawns	du	'NotifyPuzzleSpawns', 0
 strHiddenCubeSoundVolumePercentage	du	'HiddenCubeSoundVolumePercentage', 0
+strPreferUnsolvedClusterPuzzles	du	'PreferUnsolvedClusterPuzzles', 0
 strMod		du	'Mod', 0
 strVersion	du	'Version', 0
 strPakFileHash	du	'PakFileHash', 0
@@ -3026,12 +3154,13 @@ weakobjectptr_get	dq	?
 weakobjectptr_assign	dq	?
 StaticLoadObject	dq	?
 sophiarune_vmt800	dq	?
+UGISProgression_GetFromWorld	dq	?
+GetSophiaCharacterFromWorld	dq	?
 
 if add_chests
 original_initgamemode	dq	?
 original_gamemode_tick	dq	?
 original_findmarkerclass	dq	?
-GetSophiaCharacterFromWorld	dq	?
 GetAllPuzzleDataInZone	dq	?
 GetAllSolvedPuzzleDataInZone	dq	?
 FActorSpawnParameters_ctr	dq	?
