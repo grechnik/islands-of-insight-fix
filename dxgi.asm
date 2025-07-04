@@ -137,6 +137,14 @@ UGISProgression_GetFromWorld_expected = 0x000180B98B4820
 GetSophiaCharacterFromWorld_offset = 0x1344A90
 GetSophiaCharacterFromWorld_expected = 0x13840FC98548D98B
 
+; UMeshMergeFunctionLibrary::MergeMeshes can Free() a random pointer
+; while copying blueprint-provided arguments to a form that FSkeletalMeshMerge wants.
+; The first part of the patch skips over copying;
+; the second part of the patch provides correct arguments to FSkeletalMeshMerge.
+mergemeshes_offset = 0x1303568
+mergemeshes_expected1 = 0x4589000000818E0F
+mergemeshes_expected2 = 0xE8000000C08D8D48
+
 ASandboxGameMode_vmt_Tick_offset = 0x468C3B8
 ASandboxGameMode_Tick_expected = 0xA486FF41
 ASandboxGameMode_vmt_InitGameMode_offset = 0x468C8A0
@@ -1231,8 +1239,32 @@ end if
 	mov	cl, 0
 .done_gridsolve_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
+	mov	cl, 1
+	add	rdi, mergemeshes_offset - gridsolve_offset
+	mov	rax, mergemeshes_expected1
+	cmp	[rdi], rax
+	jnz	.done_fixmergemeshes_patch
+	mov	rax, mergemeshes_expected2
+	mov	rdx, 249h+12
+	cmp	[rdi+rdx-12], rax
+	jnz	.done_fixmergemeshes_patch
+	call	make_writable.large
+	mov	dword [rdi], 0x8FE990
+	mov	rdx, 249h+12
+	lea	rcx, [rdi+rdx]
+	movsxd	rax, dword [rcx-4]
+	add	rax, rcx
+	mov	[FSkeletalMeshMerge_constructor], rax
+	mov	word [rcx-12], 0xB848
+	lea	rax, [hook_call_FSkeletalMeshMerge_constructor]
+	mov	[rcx-10], rax
+	mov	word [rcx-2], 0xD0FF
+	call	restore_protection.large
+	mov	cl, 0
+.done_fixmergemeshes_patch:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
 if patch_liars_modifier
-	add	rdi, puzzlegrid_check_modifier_offset - gridsolve_offset
+	add	rdi, puzzlegrid_check_modifier_offset - mergemeshes_offset
 	mov	rax, puzzlegrid_check_modifier_expected
 	mov	cl, 1
 	cmp	[rdi-2], rax
@@ -2714,6 +2746,13 @@ clusterpuzzles_hook:
 	ret
 .end:
 
+hook_call_FSkeletalMeshMerge_constructor:
+	mov	r9, r12
+	lea	rax, [r9+10h]
+	mov	[rsp+38h], rax
+	lea	rcx, [rbp+0C0h]
+	jmp	[FSkeletalMeshMerge_constructor]
+
 section '.rdata' data readable
 ; 100.0 to convert meters -> UE units, 2**-31 to deal with our random method
 hide_radius_multiplier	dd	0x33480000, 0x33480000, 0x33480000, 0
@@ -3156,6 +3195,7 @@ StaticLoadObject	dq	?
 sophiarune_vmt800	dq	?
 UGISProgression_GetFromWorld	dq	?
 GetSophiaCharacterFromWorld	dq	?
+FSkeletalMeshMerge_constructor	dq	?
 
 if add_chests
 original_initgamemode	dq	?
