@@ -2035,6 +2035,8 @@ hook_putmarker:
 hook_loadversion:
 	sub	rsp, 28h
 	lea	rcx, [rsp+30h]
+	and	qword [rcx], 0
+	and	qword [rcx+8], 0
 	call	[loadfiletostring]
 	lea	rcx, [rsp+40h]
 	mov	rdx, rcx
