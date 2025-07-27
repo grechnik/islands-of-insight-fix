@@ -2677,6 +2677,7 @@ clusterpuzzles_hook:
 ; r13 = [r15+18h] = count of puzzles in the pool, already checked >0
 ; r14 = this+2D0h
 ; [r15+10h] = pointer to array of UPuzzleData* from the pool
+; rsi points to puzzleType
 	push	rbx
 .prolog_offs1 = $ - clusterpuzzles_hook
 	push	rbp
@@ -2698,6 +2699,13 @@ clusterpuzzles_hook:
 	mov	[rcx+rbx*8], r8
 	mov	[rcx+rax*8], rdx
 	jnz	.shuffle_loop
+; skip partitioning for gyroRing
+	cmp	dword [rsi+8], 9 ; length of "gyroRing" plus one
+	jnz	@f
+	mov	rax, [rsi]
+	cmp	dword [rax], 'g' + 'y' * 0x10000
+	jz	.done
+@@:
 ; prepare pointers for the next stage; we'll need UGISProgression* and ASophiaCharacter*
 	lea	rcx, [r14-2D0h]
 	mov	rax, [rcx]
