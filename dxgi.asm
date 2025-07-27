@@ -518,6 +518,24 @@ end if
 	or	al, [show_nearest_logicgrid]
 	jz	.skip_shownearest_patch
 	lea	rcx, [strGameplay]
+	lea	rdx, [strIgnoreNearestUnsolved1]
+	mov	r8d, -2
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	mov	[ignore_nearest_unsolved], eax
+	lea	rcx, [strGameplay]
+	lea	rdx, [strIgnoreNearestUnsolved2]
+	mov	r8d, -2
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	mov	[ignore_nearest_unsolved+4], eax
+	lea	rcx, [strGameplay]
+	lea	rdx, [strIgnoreNearestUnsolved3]
+	mov	r8d, -2
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	mov	[ignore_nearest_unsolved+8], eax
+	lea	rcx, [strGameplay]
 	lea	rdx, [strHiddenPuzzlesMarkerMaxDistance]
 	mov	r8d, 50
 	mov	r9, rbx
@@ -1627,6 +1645,14 @@ find_nearest_unsolved:
 .prolog_offs12 = $ - find_nearest_unsolved
 .prolog_size = $ - find_nearest_unsolved
 	mov	r14, [rcx+878h]	; ASophiaCharacter::CurDungeon
+	test	r14, r14
+	jz	@f
+	mov	bl, [r14+518h]	; ADungeon::Type
+	sub	bl, 1
+	cmp	bl, 1 ; 1 = MainEnclave, 2 = SideEnclave
+	jbe	@f
+	xor	r14, r14
+@@:
 	mov	rax, [rcx+130h]	; AActor::RootComponent
 	movups	xmm8, [rax+1D0h]	; get player position
 	mov	eax, 7F800000h	; fp32 infinity
@@ -1638,16 +1664,33 @@ find_nearest_unsolved:
 	mov	edi, [rcx+390h]
 	mov	rsi, [rcx+388h]
 .findnearest:
+	lea	rdx, [ignore_nearest_unsolved]
 	dec	edi
 	js	.oknearest
 	mov	rcx, [rsi+rdi*8]
+	mov	eax, [rcx+420h]
+	cmp	eax, [rdx]
+	jz	.findnearest
+	cmp	eax, [rdx+4]
+	jz	.findnearest
+	cmp	eax, [rdx+8]
+	jz	.findnearest
 ; find the relevant point
 	movzx	eax, byte [rcx+254h]
 	cmp	al, -1	; something technical including instances of AMonument for wall slots (but not puzzles themselves)
 	jz	.findnearest
 ; outside of dungeons: ignore dungeon puzzles, ignore gyroRing and rosary
 ; inside of a dungeon: ignore other dungeon puzzles, include mainland puzzles, include gyroRing and rosary from the same dungeon
+; only consider dungeons of types MainEnclave and SideEnclave
 	mov	rdx, [rcx+4E8h]
+	test	rdx, rdx
+	jz	@f
+	mov	bl, [rdx+518h]
+	sub	bl, 1
+	cmp	bl, 1
+	jbe	@f
+	xor	edx, edx
+@@:
 	cmp	rdx, r14
 	jz	.samedungeon
 	test	r14, r14
@@ -3140,6 +3183,9 @@ strHighQualitySightSeerCapture	du	'HighQualitySightSeerCapture', 0
 strShowNearestUnsolved	du	'ShowNearestUnsolved', 0
 strEmoteMarksNearestUnsolved	du	'EmoteMarksNearestUnsolved', 0
 strHiddenPuzzlesMarkerMaxDistance	du	'HiddenPuzzlesMarkerMaxDistance', 0
+strIgnoreNearestUnsolved1	du	'IgnoreNearestUnsolved1', 0
+strIgnoreNearestUnsolved2	du	'IgnoreNearestUnsolved2', 0
+strIgnoreNearestUnsolved3	du	'IgnoreNearestUnsolved3', 0
 strShowNearestLogicGrid	du	'ShowNearestLogicGrid', 0
 strMinLogicGridDifficulty	du	'MinLogicGridDifficulty', 0
 strHackMatchboxRadar	du	'HackMatchboxRadar', 0
@@ -3236,6 +3282,7 @@ max_backups	dd	?
 backup_period	dd	?
 last_backup_time	dd	?
 hiddencube_sound_volume	dd	?
+ignore_nearest_unsolved	rd	3
 backup_made	db	?
 use_temporary_file db	?
 show_nearest_unsolved	db	?
