@@ -81,6 +81,9 @@ radar_hiddenobj_check_offset = 0x12D563F
 radar_hiddenobj_check_expected = 0x840FC08400000658
 radar_matchbox_check_offset = 0x12D56FD
 radar_matchbox_check_expected = 0xE83077D92F0FD858
+; also patch distance calculation to exclude Z component
+radar_distance_calc_offset = 0x12D56F4
+radar_distance_calc_expected = 0xD8580FF3
 
 puzzlegrid_check_modifier_offset = 0x138EA71
 puzzlegrid_check_modifier_expected = 0x850F06F883410101
@@ -805,9 +808,12 @@ end if
 	mov	rax, radar_matchbox_check_expected
 	cmp	[rdi+radar_matchbox_check_offset-7-radar_hiddenobj_check_offset], rax
 	jnz	.done_chests_patch
+	cmp	dword [rdi+radar_distance_calc_offset-radar_hiddenobj_check_offset], radar_distance_calc_expected
+	jnz	.done_chests_patch
 	mov	rdx, radar_matchbox_check_offset+14-radar_hiddenobj_check_offset
 	call	make_writable.large
 	mov	byte [rdi], 0
+	mov	dword [rdi+radar_distance_calc_offset-radar_hiddenobj_check_offset], 0x90909090
 	lea	rdx, [rdi+radar_matchbox_check_offset-radar_hiddenobj_check_offset]
 	mov	word [rdx], 0xB848
 	lea	rax, [radar_check]
