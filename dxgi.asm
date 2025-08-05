@@ -148,6 +148,15 @@ mergemeshes_offset = 0x1303568
 mergemeshes_expected1 = 0x4589000000818E0F
 mergemeshes_expected2 = 0xE8000000C08D8D48
 
+; ADungeon::GetCompletionPercentage is totally inadequate for the rings quest
+getcompletionpercentage_offset = 0x12A6685
+getcompletionpercentage_expected = 0x996348202474894C
+getdungeoncompletionpercentage_offset = 0x12A7E60
+getdungeoncompletionpercentage_expected = 0x00000628918B4830
+; and while we are at it, might also add count of solved and all rings
+getownedpuzzlecompletiondata_offset = 0x12AC48A
+getownedpuzzlecompletiondata_expected = 0x99634820247C8948
+
 ASandboxGameMode_vmt_Tick_offset = 0x468C3B8
 ASandboxGameMode_Tick_expected = 0xA486FF41
 ASandboxGameMode_vmt_InitGameMode_offset = 0x468C8A0
@@ -913,6 +922,12 @@ end if
 	jnz	@f
 	mov	[GetSophiaCharacterFromWorld], rax
 @@:
+	lea	rax, [rdi+UGISProgression_GetFromWorld_offset-bestsolvetime1_offset]
+	mov	rdx, UGISProgression_GetFromWorld_expected
+	cmp	[rax+9], rdx
+	jnz	@f
+	mov	[UGISProgression_GetFromWorld], rax
+@@:
 	add	rdi, clusterpuzzles_patch_offset - bestsolvetime1_offset
 	lea	rcx, [strGameplay]
 	lea	rdx, [strPreferUnsolvedClusterPuzzles]
@@ -930,11 +945,8 @@ end if
 	jz	.done_clusterpuzzles_patch
 	cmp	[GetSophiaCharacterFromWorld], 0
 	jz	.done_clusterpuzzles_patch
-	lea	rax, [rdi+UGISProgression_GetFromWorld_offset-clusterpuzzles_patch_offset]
-	mov	rdx, UGISProgression_GetFromWorld_expected
-	cmp	[rax+9], rdx
-	jnz	.done_clusterpuzzles_patch
-	mov	[UGISProgression_GetFromWorld], rax
+	cmp	[UGISProgression_GetFromWorld], 0
+	jz	.done_clusterpuzzles_patch
 	call	make_writable
 	mov	word [rdi], 0xB848
 	lea	rax, [clusterpuzzles_hook]
@@ -969,7 +981,52 @@ end if
 	mov	cl, 0
 .done_hiddencube_endplaypatch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
-	add	rdi, hiddencube_makesoundevent_offset-hiddencube_vmt_EndPlay_offset
+	add	rdi, getcompletionpercentage_offset-hiddencube_vmt_EndPlay_offset
+	lea	rcx, [strGameplay]
+	lea	rdx, [strRingsQuestCompletionMode]
+	xor	r8d, r8d
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	mov	[rings_quest_completion_mode], al
+	test	al, al
+	jz	.skip_rings_quest_patch
+	mov	cl, 1
+	mov	rax, getcompletionpercentage_expected
+	cmp	[rdi], rax
+	jnz	.done_rings_quest_patch
+	cmp	[UGISProgression_GetFromWorld], 0
+	jz	.done_rings_quest_patch
+	lea	rdx, [rdi+getdungeoncompletionpercentage_offset-getcompletionpercentage_offset]
+	mov	rax, getdungeoncompletionpercentage_expected
+	cmp	qword [rdx+0Eh], rax
+	jnz	.done_rings_quest_patch
+	mov	[getdungeoncompletionpercentage], rdx
+	lea	rdx, [rdi+getownedpuzzlecompletiondata_offset-getcompletionpercentage_offset+12]
+	mov	rax, getownedpuzzlecompletiondata_expected
+	cmp	[rdx-12], rax
+	jnz	.done_rings_quest_patch
+	mov	[getownedpuzzlecompletiondata_continue], rdx
+	lea	rax, [rdi+12]
+	mov	[getcompletionpercentage_continue], rax
+	call	make_writable
+	lea	rax, [hook_getcompletionpercentage]
+	mov	word [rdi], 0xB848
+	mov	[rdi+2], rax
+	mov	word [rdi+10], 0xE0FF
+	call	restore_protection
+	add	rdi, getownedpuzzlecompletiondata_offset - getcompletionpercentage_offset
+	call	make_writable
+	mov	word [rdi], 0xB848
+	lea	rax, [hook_getownedpuzzlecompletiondata]
+	mov	[rdi+2], rax
+	mov	word [rdi+10], 0xE0FF
+	call	restore_protection
+	sub	rdi, getownedpuzzlecompletiondata_offset - getcompletionpercentage_offset
+	mov	cl, 0
+.done_rings_quest_patch:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
+.skip_rings_quest_patch:
+	add	rdi, hiddencube_makesoundevent_offset-getcompletionpercentage_offset
 	test	cl, cl
 	jnz	.skip_hiddencube_soundpatch
 	lea	rcx, [strGameplay]
@@ -2812,6 +2869,158 @@ hook_call_FSkeletalMeshMerge_constructor:
 	lea	rcx, [rbp+0C0h]
 	jmp	[FSkeletalMeshMerge_constructor]
 
+hook_getcompletionpercentage:
+	cmp	dword [rcx+420h], 10764 ; APuzzleBase::KrakenId == <id of rings quest>
+	jz	.rings_quest
+	mov	[rsp+20h], r14
+	movsxd	rbx, dword [rcx+7C8h]
+	jmp	[getcompletionpercentage_continue]
+.rings_quest:
+	mov	byte [rcx+610h], 0	; ADungeon::bHidePuzzleCount
+	cmp	[rings_quest_completion_mode], 1
+	jnz	.mode2
+	add	rsp, 30h
+	pop	r14
+	pop	rdi
+	pop	rsi
+	db	48h
+	jmp	[getdungeoncompletionpercentage]
+.mode2:
+	call	calc_live_gyroRings_solved
+	cvtsi2ss xmm0, r8d
+	test	r9d, r9d
+	jz	@f
+	cvtsi2ss xmm1, r9d
+	divss	xmm0, xmm1
+@@:
+	mov	rbx, [rsp+60h]
+	add	rsp, 30h
+	pop	r14
+	pop	rdi
+	pop	rsi
+	ret
+.end:
+
+hook_getownedpuzzlecompletiondata:
+	cmp	dword [rcx+420h], 10764
+	jz	.rings_quest
+	mov	[rsp+20h], rdi
+	movsxd	rbx, dword [rcx+7C8h]
+	jmp	[getownedpuzzlecompletiondata_continue]
+.rings_quest:
+	call	calc_live_gyroRings_solved
+	mov	[r14], r9d
+	mov	[rsi], r8d
+	mov	rbx, [rsp+60h]
+	add	rsp, 30h
+	pop	r14
+	pop	rdi
+	pop	rsi
+	ret
+.end:
+
+calc_live_gyroRings_solved:
+	sub	rsp, 28h
+	mov	rax, [rcx]
+	call	qword [rax+160h] ; get UWorld*
+	mov	rbx, [rax+180h]
+	mov	rbx, [rbx+218h]	; get UPuzzleDatabase*
+	mov	rcx, rax
+	call	[UGISProgression_GetFromWorld]
+	xor	r8d, r8d
+	xor	r9d, r9d
+	test	rax, rax
+	jz	.done
+	lea	rdi, [rax+50h+0F0h]	; get UGISProgression::PlayerProgression::krakenIDToSolvedStatus
+	test	rbx, rbx
+	jz	.done
+	add	rbx, 280h	; puzzlePoolToTypeToPuzzleData
+	mov	eax, [rbx+48h]
+	dec	eax
+	and	eax, 0xcf22bcd9	; hash of "live"
+	mov	rcx, [rbx+40h]
+	test	rcx, rcx
+	jnz	@f
+	lea	rcx, [rbx+38h]
+@@:
+	mov	ecx, [rcx+rax*4]
+.look_pool:
+	cmp	ecx, -1
+	jz	.done
+	imul	ecx, 68h
+	add	rcx, [rbx]
+	cmp	dword [rcx+8], 5	; length of "live" plus one
+	jnz	@f
+	mov	rax, [rcx]
+	cmp	dword [rax], 'l' + 'i' * 0x10000
+	jz	.found_pool
+@@:
+	mov	ecx, [rcx+60h]
+	jmp	.look_pool
+.found_pool:
+	mov	eax, [rcx+10h+48h]
+	dec	eax
+	and	eax, 0x74c2fa6b	; hash of "gyroRing"
+	mov	rbx, [rcx+10h+40h]
+	test	rbx, rbx
+	jnz	@f
+	lea	rbx, [rcx+10h+38h]
+@@:
+	mov	ebx, [rbx+rax*4]
+.look_puzzletype:
+	cmp	ebx, -1
+	jz	.done
+	imul	ebx, 28h
+	add	rbx, [rcx+10h]
+	cmp	dword [rbx+8], 9	; length of "gyroRing" plus one
+	jnz	@f
+	mov	rax, [rbx]
+	cmp	dword [rax], 'g' + 'y' * 0x10000
+	jz	.found_puzzletype
+@@:
+	mov	ebx, [rbx+20h]
+	jmp	.look_puzzletype
+.found_puzzletype:
+	mov	r9d, [rbx+18h]
+	mov	rbx, [rbx+10h]
+	lea	r10, [rbx+r9*8]
+	cmp	rbx, r10
+	jae	.done
+	mov	rdx, [rdi]
+	mov	r11, [rdi+40h]
+	test	r11, r11
+	jnz	.check_solve
+	lea	r11, [rdi+38h]
+.check_solve:
+	mov	rax, [rbx]
+	mov	eax, [rax+38h]	; UPuzzleData::KrakenId
+	mov	ecx, [rdi+48h]
+	dec	ecx
+	and	ecx, eax
+	mov	ecx, [r11+rcx*4]
+	cmp	ecx, -1
+	jz	.next
+@@:
+	imul	ecx, 38h
+	cmp	[rdx+rcx], eax
+	jz	.solved
+	mov	ecx, [rdx+rcx+30h]
+	cmp	ecx, -1
+	jnz	@b
+	jmp	.next
+.solved:
+	cmp	word [rdx+rcx+8], 1	; bSolved = true, bReset = false
+	jnz	.next
+	inc	r8d
+.next:
+	add	rbx, 8
+	cmp	rbx, r10
+	jb	.check_solve
+.done:
+	add	rsp, 28h
+	ret
+.end:
+
 section '.rdata' data readable
 ; 100.0 to convert meters -> UE units, 2**-31 to deal with our random method
 hide_radius_multiplier	dd	0x33480000, 0x33480000, 0x33480000, 0
@@ -2879,6 +3088,9 @@ end if
 	dd	rva hook_AHiddenCube_makesoundevent, rva hook_AHiddenCube_makesoundevent.end, rva make_writable_unwind
 	dd	rva hook_sophiarune_vmt800, rva hook_sophiarune_vmt800.end, rva hook_sophiarune_vmt800_unwind
 	dd	rva clusterpuzzles_hook, rva clusterpuzzles_hook.end, rva clusterpuzzles_hook_unwind
+	dd	rva hook_getcompletionpercentage, rva hook_getcompletionpercentage.end, rva hook_getcompletionpercentage_unwind
+	dd	rva hook_getownedpuzzlecompletiondata, rva hook_getownedpuzzlecompletiondata.end, rva hook_getcompletionpercentage_unwind
+	dd	rva calc_live_gyroRings_solved, rva calc_live_gyroRings_solved.end, rva make_writable_unwind
 end data
 
 macro start_unwind_data {
@@ -3126,6 +3338,18 @@ start_unwind_data
 	db	clusterpuzzles_hook.prolog_offs2, 50h	; UWOP_PUSH_NONVOL rbp
 	db	clusterpuzzles_hook.prolog_offs1, 30h	; UWOP_PUSH_NONVOL rbx
 end_unwind_data
+hook_getcompletionpercentage_unwind:
+	db	1, 0, hook_getcompletionpercentage_unwind.size / 2, 0
+start_unwind_data
+	db	0, 4 + 5 * 10h	; UWOP_SAVE_NONVOL rbp
+	dw	0Dh
+	db	0, 4 + 3 * 10h	; UWOP_SAVE_NONVOL rbx
+	dw	0Ch
+	db	0, 2 + ((30h - 8) / 8) * 10h	; UWOP_ALLOC_SMALL for 30h bytes
+	db	0, 0E0h	; UWOP_PUSH_NONVOL r14
+	db	0, 70h	; UWOP_PUSH_NONVOL rdi
+	db	0, 60h	; UWOP_PUSH_NONVOL rsi
+end_unwind_data
 
 align 4
 fixups_start = $
@@ -3205,6 +3429,7 @@ strCheaperMusicForesight	du	'CheaperMusicForesight', 0
 strNotifyPuzzleSpawns	du	'NotifyPuzzleSpawns', 0
 strHiddenCubeSoundVolumePercentage	du	'HiddenCubeSoundVolumePercentage', 0
 strPreferUnsolvedClusterPuzzles	du	'PreferUnsolvedClusterPuzzles', 0
+strRingsQuestCompletionMode	du	'RingsQuestCompletionMode', 0
 strMod		du	'Mod', 0
 strVersion	du	'Version', 0
 strPakFileHash	du	'PakFileHash', 0
@@ -3258,6 +3483,9 @@ sophiarune_vmt800	dq	?
 UGISProgression_GetFromWorld	dq	?
 GetSophiaCharacterFromWorld	dq	?
 FSkeletalMeshMerge_constructor	dq	?
+getcompletionpercentage_continue	dq	?
+getdungeoncompletionpercentage	dq	?
+getownedpuzzlecompletiondata_continue	dq	?
 
 if add_chests
 original_initgamemode	dq	?
@@ -3296,6 +3524,7 @@ show_nearest_logicgrid	db	?
 min_logicgrid_difficulty	db	?
 current_active_marker_type	db	?
 giskraken_init_called	db	?
+rings_quest_completion_mode	db	?
 if debug_chests
 add_chests_marker	db	?
 end if
