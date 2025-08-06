@@ -186,6 +186,7 @@ num_zones = 5
 patch_liars_modifier = 0
 add_chests = 1
 debug_chests = 0
+emote1_loops_types = 0
 
 section '.text' code readable executable
 
@@ -2111,6 +2112,10 @@ hook_putmarker:
 	mov	eax, not ((1 shl 0) or (1 shl 10) or (1 shl 11) or (1 shl 12)) ; action 5: everything else
 	cmp	dl, 5
 	jz	.action
+if emote1_loops_types
+	cmp	dl, 1
+	jz	.emote1
+end if
 	mov	[rsp+20h], rbx
 	mov	[rsp+10h], dl
 	mov	[rsp+8], rcx
@@ -2137,6 +2142,35 @@ hook_putmarker:
 	add	rsp, 28h
 	ret
 .end:
+if emote1_loops_types
+.emote1:
+	mov	[rsp+8], rcx
+	mov	cl, [current_emote1_type]
+	mov	[rsp+10h], cl
+	sub	rsp, 28h
+	cmp	[current_marker_puzzle], 0
+	jz	@f
+.emote1next:
+	inc	ecx
+	and	cl, 31
+	mov	[current_emote1_type], cl
+	cmp	cl, [rsp+28h+10h]
+	jz	.endloop
+@@:
+	mov	eax, 1
+	shl	eax, cl
+	mov	rcx, [rsp+28h+8]
+	call	find_nearest_unsolved
+	mov	cl, [current_emote1_type]
+	test	rax, rax
+	jz	.emote1next
+	mov	[current_marker_puzzle], rax
+	movaps	xword [current_marker_pos], xmm0
+.endloop:
+	add	rsp, 28h
+	ret
+.emote1end:
+end if
 
 hook_loadversion:
 	sub	rsp, 28h
@@ -3066,6 +3100,9 @@ data 3  ; IMAGE_DIRECTORY_ENTRY_EXCEPTION
 	dd	rva find_nearest_unsolved, rva find_nearest_unsolved.end, rva find_nearest_unsolved_unwind
 	dd	rva additional_markers, rva additional_markers.end, rva additional_markers_unwind
 	dd	rva hook_putmarker.start_stack_use, rva hook_putmarker.end, rva make_writable_unwind
+if emote1_loops_types
+	dd	rva hook_putmarker.emote1, rva hook_putmarker.emote1end, rva make_writable_unwind
+end if
 	dd	rva hook_loadversion, rva hook_loadversion.end, rva make_writable_unwind
 	dd	rva hook_puzzledatabase_init, rva hook_puzzledatabase_init.end, rva hook_puzzledatabase_init_unwind
 if add_chests
@@ -3527,6 +3564,9 @@ giskraken_init_called	db	?
 rings_quest_completion_mode	db	?
 if debug_chests
 add_chests_marker	db	?
+end if
+if emote1_loops_types
+current_emote1_type	db	?
 end if
 align 2
 modVersion	rw	256
