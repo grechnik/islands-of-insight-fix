@@ -2910,16 +2910,14 @@ hook_getcompletionpercentage:
 	movsxd	rbx, dword [rcx+7C8h]
 	jmp	[getcompletionpercentage_continue]
 .rings_quest:
-	mov	byte [rcx+610h], 0	; ADungeon::bHidePuzzleCount
+	mov	rsi, rcx
+	call	[getdungeoncompletionpercentage]
+	comiss	xmm0, dword [z_one+8]
+	jb	.exit
+	mov	byte [rsi+610h], 0	; ADungeon::bHidePuzzleCount
 	cmp	[rings_quest_completion_mode], 1
-	jnz	.mode2
-	add	rsp, 30h
-	pop	r14
-	pop	rdi
-	pop	rsi
-	db	48h
-	jmp	[getdungeoncompletionpercentage]
-.mode2:
+	jz	.exit
+	mov	rcx, rsi
 	call	calc_live_gyroRings_solved
 	cvtsi2ss xmm0, r8d
 	test	r9d, r9d
@@ -2928,6 +2926,7 @@ hook_getcompletionpercentage:
 	divss	xmm0, xmm1
 @@:
 	mov	rbx, [rsp+60h]
+.exit:
 	add	rsp, 30h
 	pop	r14
 	pop	rdi
