@@ -151,8 +151,6 @@ mergemeshes_expected2 = 0xE8000000C08D8D48
 ; ADungeon::GetCompletionPercentage is totally inadequate for the rings quest
 getcompletionpercentage_offset = 0x12A6685
 getcompletionpercentage_expected = 0x996348202474894C
-getdungeoncompletionpercentage_offset = 0x12A7E60
-getdungeoncompletionpercentage_expected = 0x00000628918B4830
 ; and while we are at it, might also add count of solved and all rings
 getownedpuzzlecompletiondata_offset = 0x12AC48A
 getownedpuzzlecompletiondata_expected = 0x99634820247C8948
@@ -997,11 +995,6 @@ end if
 	jnz	.done_rings_quest_patch
 	cmp	[UGISProgression_GetFromWorld], 0
 	jz	.done_rings_quest_patch
-	lea	rdx, [rdi+getdungeoncompletionpercentage_offset-getcompletionpercentage_offset]
-	mov	rax, getdungeoncompletionpercentage_expected
-	cmp	qword [rdx+0Eh], rax
-	jnz	.done_rings_quest_patch
-	mov	[getdungeoncompletionpercentage], rdx
 	lea	rdx, [rdi+getownedpuzzlecompletiondata_offset-getcompletionpercentage_offset+12]
 	mov	rax, getownedpuzzlecompletiondata_expected
 	cmp	[rdx-12], rax
@@ -2910,14 +2903,17 @@ hook_getcompletionpercentage:
 	movsxd	rbx, dword [rcx+7C8h]
 	jmp	[getcompletionpercentage_continue]
 .rings_quest:
-	mov	rsi, rcx
-	call	[getdungeoncompletionpercentage]
-	comiss	xmm0, dword [z_one+8]
+	xorps	xmm0, xmm0
+	mov	rax, [rcx+628h]	; ADungeon::MyQuest
+; we could be more specific than just returning zero for unfinished objectives,
+; but blueprints don't call this function
+; and the only native caller only cares about whether the returned value is <1 or >=1
+	cmp	byte [rax+110h], 4	; UQuest::QuestState == EQuestState::FullyCompleted
 	jb	.exit
-	mov	byte [rsi+610h], 0	; ADungeon::bHidePuzzleCount
+	mov	byte [rcx+610h], 0	; ADungeon::bHidePuzzleCount
+	movss	xmm0, dword [z_one+8]
 	cmp	[rings_quest_completion_mode], 1
 	jz	.exit
-	mov	rcx, rsi
 	call	calc_live_gyroRings_solved
 	cvtsi2ss xmm0, r8d
 	test	r9d, r9d
