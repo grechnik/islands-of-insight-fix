@@ -2897,8 +2897,12 @@ hook_call_FSkeletalMeshMerge_constructor:
 	jmp	[FSkeletalMeshMerge_constructor]
 
 hook_getcompletionpercentage:
-	cmp	dword [rcx+420h], 10764 ; APuzzleBase::KrakenId == <id of rings quest>
+	mov	eax, [rcx+420h]	; APuzzleBase::KrakenId
+	cmp	eax, 10764	; id of rings quest
 	jz	.rings_quest
+	sub	eax, 25300
+	cmp	eax, 4
+	jb	.clusterpuzzle_quest
 	mov	[rsp+20h], r14
 	movsxd	rbx, dword [rcx+7C8h]
 	jmp	[getcompletionpercentage_continue]
@@ -2914,7 +2918,9 @@ hook_getcompletionpercentage:
 	movss	xmm0, dword [z_one+8]
 	cmp	[rings_quest_completion_mode], 1
 	jz	.exit
-	call	calc_live_gyroRings_solved
+	lea	rsi, [live_gyroRing_pool]
+.common:
+	call	calc_solved_in_pool
 	cvtsi2ss xmm0, r8d
 	test	r9d, r9d
 	jz	@f
@@ -2922,25 +2928,50 @@ hook_getcompletionpercentage:
 	divss	xmm0, xmm1
 @@:
 	mov	rbx, [rsp+60h]
+	mov	rbp, [rsp+68h]
 .exit:
 	add	rsp, 30h
 	pop	r14
 	pop	rdi
 	pop	rsi
 	ret
+.clusterpuzzle_quest:
+	xorps	xmm0, xmm0
+	mov	rdx, [rcx+628h]
+	test	rdx, rdx
+	jz	.exit
+	mov	byte [rdx+110h], 0	; UQuest::QuestState = EQuestState::Inactive
+	lea	rsi, [clusterpuzzle_quests]
+	mov	eax, [rsi+rax*4]
+	add	rsi, rax
+	jmp	.common
 .end:
 
 hook_getownedpuzzlecompletiondata:
-	cmp	dword [rcx+420h], 10764
+	mov	[rsp+20h], rsi
+	mov	eax, [rcx+420h]
+	cmp	eax, 10764
 	jz	.rings_quest
+	sub	eax, 25300
+	cmp	eax, 4
+	jb	.clusterpuzzle_quest
 	mov	[rsp+20h], rdi
 	movsxd	rbx, dword [rcx+7C8h]
 	jmp	[getownedpuzzlecompletiondata_continue]
 .rings_quest:
-	call	calc_live_gyroRings_solved
+	lea	rsi, [live_gyroRing_pool]
+	jmp	.common
+.clusterpuzzle_quest:
+	lea	rsi, [clusterpuzzle_quests]
+	mov	eax, [rsi+rax*4]
+	add	rsi, rax
+.common:
+	call	calc_solved_in_pool
 	mov	[r14], r9d
-	mov	[rsi], r8d
+	mov	rax, [rsp+20h]
+	mov	[rax], r8d
 	mov	rbx, [rsp+60h]
+	mov	rbp, [rsp+68h]
 	add	rsp, 30h
 	pop	r14
 	pop	rdi
@@ -2948,12 +2979,12 @@ hook_getownedpuzzlecompletiondata:
 	ret
 .end:
 
-calc_live_gyroRings_solved:
+calc_solved_in_pool:
 	sub	rsp, 28h
 	mov	rax, [rcx]
 	call	qword [rax+160h] ; get UWorld*
-	mov	rbx, [rax+180h]
-	mov	rbx, [rbx+218h]	; get UPuzzleDatabase*
+	mov	rbp, [rax+180h]
+	mov	rbp, [rbp+218h]	; get UPuzzleDatabase*
 	mov	rcx, rax
 	call	[UGISProgression_GetFromWorld]
 	xor	r8d, r8d
@@ -2961,27 +2992,30 @@ calc_live_gyroRings_solved:
 	test	rax, rax
 	jz	.done
 	lea	rdi, [rax+50h+0F0h]	; get UGISProgression::PlayerProgression::krakenIDToSolvedStatus
-	test	rbx, rbx
+	test	rbp, rbp
 	jz	.done
-	add	rbx, 280h	; puzzlePoolToTypeToPuzzleData
-	mov	eax, [rbx+48h]
+	add	rbp, 280h	; puzzlePoolToTypeToPuzzleData
+.pool_loop:
+	mov	eax, [rbp+48h]
 	dec	eax
-	and	eax, 0xcf22bcd9	; hash of "live"
-	mov	rcx, [rbx+40h]
+	and	eax, [rsi+4]
+	mov	rcx, [rbp+40h]
 	test	rcx, rcx
 	jnz	@f
-	lea	rcx, [rbx+38h]
+	lea	rcx, [rbp+38h]
 @@:
 	mov	ecx, [rcx+rax*4]
 .look_pool:
 	cmp	ecx, -1
-	jz	.done
+	jz	.pool_done
+	mov	edx, [rsi]
 	imul	ecx, 68h
-	add	rcx, [rbx]
-	cmp	dword [rcx+8], 5	; length of "live" plus one
+	add	rcx, [rbp]
+	cmp	dword [rcx+8], edx
 	jnz	@f
 	mov	rax, [rcx]
-	cmp	dword [rax], 'l' + 'i' * 0x10000
+	mov	edx, [rsi+8]
+	cmp	dword [rax], edx
 	jz	.found_pool
 @@:
 	mov	ecx, [rcx+60h]
@@ -2989,7 +3023,7 @@ calc_live_gyroRings_solved:
 .found_pool:
 	mov	eax, [rcx+10h+48h]
 	dec	eax
-	and	eax, 0x74c2fa6b	; hash of "gyroRing"
+	and	eax, [rsi+16]
 	mov	rbx, [rcx+10h+40h]
 	test	rbx, rbx
 	jnz	@f
@@ -2998,23 +3032,26 @@ calc_live_gyroRings_solved:
 	mov	ebx, [rbx+rax*4]
 .look_puzzletype:
 	cmp	ebx, -1
-	jz	.done
+	jz	.pool_done
+	mov	edx, [rsi+12]
 	imul	ebx, 28h
 	add	rbx, [rcx+10h]
-	cmp	dword [rbx+8], 9	; length of "gyroRing" plus one
+	cmp	dword [rbx+8], edx
 	jnz	@f
 	mov	rax, [rbx]
-	cmp	dword [rax], 'g' + 'y' * 0x10000
+	mov	edx, [rsi+20]
+	cmp	dword [rax], edx
 	jz	.found_puzzletype
 @@:
 	mov	ebx, [rbx+20h]
 	jmp	.look_puzzletype
 .found_puzzletype:
-	mov	r9d, [rbx+18h]
+	mov	r10d, [rbx+18h]
+	add	r9d, r10d
 	mov	rbx, [rbx+10h]
-	lea	r10, [rbx+r9*8]
+	lea	r10, [rbx+r10*8]
 	cmp	rbx, r10
-	jae	.done
+	jae	.pool_done
 	mov	rdx, [rdi]
 	mov	r11, [rdi+40h]
 	test	r11, r11
@@ -3045,6 +3082,10 @@ calc_live_gyroRings_solved:
 	add	rbx, 8
 	cmp	rbx, r10
 	jb	.check_solve
+.pool_done:
+	add	rsi, 24
+	cmp	dword [rsi], 0
+	jnz	.pool_loop
 .done:
 	add	rsp, 28h
 	ret
@@ -3122,7 +3163,7 @@ end if
 	dd	rva clusterpuzzles_hook, rva clusterpuzzles_hook.end, rva clusterpuzzles_hook_unwind
 	dd	rva hook_getcompletionpercentage, rva hook_getcompletionpercentage.end, rva hook_getcompletionpercentage_unwind
 	dd	rva hook_getownedpuzzlecompletiondata, rva hook_getownedpuzzlecompletiondata.end, rva hook_getcompletionpercentage_unwind
-	dd	rva calc_live_gyroRings_solved, rva calc_live_gyroRings_solved.end, rva make_writable_unwind
+	dd	rva calc_solved_in_pool, rva calc_solved_in_pool.end, rva make_writable_unwind
 end data
 
 macro start_unwind_data {
@@ -3394,6 +3435,40 @@ end data
 _2pow62	dd	0x5E800000
 normal_hint_cost	dd	1.0
 music_hint_cost		dd	0.5
+
+clusterpuzzle_quests:
+	dd	lobby_and_hardCOWYC_pool - clusterpuzzle_quests
+	dd	cong_pool - clusterpuzzle_quests
+	dd	myopia_pool - clusterpuzzle_quests
+	dd	lostgrids_pool - clusterpuzzle_quests
+
+; length of pool name plus 1, hash of pool name, first dword of pool name, then the same for puzzle type
+live_gyroRing_pool:
+; "live", "gyroRing"
+	dd	5, 0xcf22bcd9, 'l' + 'i' * 0x10000, 9, 0x74c2fa6b, 'g' + 'y' * 0x10000
+	dd	0
+lobby_and_hardCOWYC_pool:
+; "Lobby", "logicGrid"
+	dd	6, 0x884c4b9e, 'L' + 'o' * 0x10000, 10, 0x71438cc7, 'l' + 'o' * 0x10000
+; "HardCOWYC", "logicGrid"
+	dd	10, 0xf93b2590, 'H' + 'a' * 0x10000, 10, 0x71438cc7, 'l' + 'o' * 0x10000
+	dd	0
+cong_pool:
+; "Cong", "logicGrid"
+	dd	5, 0xb14aae91, 'C' + 'o' * 0x10000, 10, 0x71438cc7, 'l' + 'o' * 0x10000
+	dd	0
+myopia_pool:
+; "myopia", "logicGrid"
+	dd	7, 0x85a1ea7c, 'm' + 'y' * 0x10000, 10, 0x71438cc7, 'l' + 'o' * 0x10000
+	dd	0
+lostgrids_pool:
+; "lostgridsLogic", "logicGrid"
+	dd	15, 0x2ffb8406, 'l' + 'o' * 0x10000, 10, 0x71438cc7, 'l' + 'o' * 0x10000
+; "lostgridsPattern", "completeThePattern"
+	dd	17, 0x79fd17d2, 'l' + 'o' * 0x10000, 19, 0x4de90c31, 'c' + 'o' * 0x10000
+; "lostgridsMusic", "musicGrid"
+	dd	15, 0x7a18c13f, 'l' + 'o' * 0x10000, 10, 0xebb0eebf, 'm' + 'u' * 0x10000
+	dd	0
 
 patch_failed_text:
 	db	'Some patches have not been applied. Probably the executable has been updated and you need to get a new version of the patch.', 0
