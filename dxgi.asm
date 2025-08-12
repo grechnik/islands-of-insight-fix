@@ -2516,13 +2516,17 @@ hook_giskraken_init:
 .end:
 
 radar_check:
-; in dungeons, show everything except technical -1s
+; in dungeons except rings temple, show everything except technical -1s
 ; outside of dungeons, ignore gyroRing and rosary
 	mov	al, [rbx+254h]
 	cmp	al, -1
 	jz	.check_manual_rosary
-	cmp	qword [rbx+4E8h], 0
+	mov	rdx, [rbx+4E8h]
+	test	rdx, rdx
+	jz	@f
+	cmp	dword [rdx+420h], 10764
 	jnz	.ok
+@@:
 	cmp	al, 9
 	jz	.nope
 	cmp	al, 26
