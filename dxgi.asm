@@ -155,6 +155,12 @@ getcompletionpercentage_expected = 0x996348202474894C
 getownedpuzzlecompletiondata_offset = 0x12AC48A
 getownedpuzzlecompletiondata_expected = 0x99634820247C8948
 
+; don't make WBP_DungeonInfo_C a focus widget, show it normally
+ADungeon_OnPlayerBeginInteract_offset = 0x12BA56E
+ADungeon_OnPlayerBeginInteract_expected = 0x8844000002F0B389
+UUserWidget_AddToViewport_offset = 0x2BC82B0
+UUserWidget_AddToViewport_expected = 0xD233C28B44018B48
+
 ASandboxGameMode_vmt_Tick_offset = 0x468C3B8
 ASandboxGameMode_Tick_expected = 0xA486FF41
 ASandboxGameMode_vmt_InitGameMode_offset = 0x468C8A0
@@ -1020,8 +1026,24 @@ end if
 .done_rings_quest_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
 .skip_rings_quest_patch:
-	add	rdi, hiddencube_makesoundevent_offset-getcompletionpercentage_offset
-	test	cl, cl
+	add	rdi, ADungeon_OnPlayerBeginInteract_offset+1-getcompletionpercentage_offset
+	mov	rax, ADungeon_OnPlayerBeginInteract_expected
+	mov	cl, 1
+	cmp	[rdi-13h], rax
+	jnz	.done_unfocus_dungeoninfo_patch
+	cmp	byte [rdi-1], 0xE8
+	jnz	.done_unfocus_dungeoninfo_patch
+	mov	rax, UUserWidget_AddToViewport_expected
+	cmp	[rdi+UUserWidget_AddToViewport_offset-(ADungeon_OnPlayerBeginInteract_offset+1)], rax
+	jnz	.done_unfocus_dungeoninfo_patch
+	call	make_writable
+	mov	dword [rdi], UUserWidget_AddToViewport_offset - (ADungeon_OnPlayerBeginInteract_offset+5)
+	call	restore_protection
+	mov	cl, 0
+.done_unfocus_dungeoninfo_patch:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
+	add	rdi, hiddencube_makesoundevent_offset-ADungeon_OnPlayerBeginInteract_offset-1
+	cmp	[rbx + .patch_failed - .orig_dll_name], 0
 	jnz	.skip_hiddencube_soundpatch
 	lea	rcx, [strGameplay]
 	lea	rdx, [strHiddenCubeSoundVolumePercentage]
