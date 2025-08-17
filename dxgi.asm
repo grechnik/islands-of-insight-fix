@@ -2927,7 +2927,7 @@ hook_getcompletionpercentage:
 	cmp	eax, 10764	; id of rings quest
 	jz	.rings_quest
 	sub	eax, 25300
-	cmp	eax, 4
+	cmp	eax, 5
 	jb	.clusterpuzzle_quest
 	mov	[rsp+20h], r14
 	movsxd	rbx, dword [rcx+7C8h]
@@ -2979,7 +2979,7 @@ hook_getownedpuzzlecompletiondata:
 	cmp	eax, 10764
 	jz	.rings_quest
 	sub	eax, 25300
-	cmp	eax, 4
+	cmp	eax, 5
 	jb	.clusterpuzzle_quest
 	mov	[rsp+20h], rdi
 	movsxd	rbx, dword [rcx+7C8h]
@@ -3463,19 +3463,18 @@ normal_hint_cost	dd	1.0
 music_hint_cost		dd	0.5
 
 clusterpuzzle_quests:
-	dd	lobby_and_hardCOWYC_pool - clusterpuzzle_quests
+	dd	hardCOWYC_pool - clusterpuzzle_quests
 	dd	cong_pool - clusterpuzzle_quests
 	dd	myopia_pool - clusterpuzzle_quests
 	dd	lostgrids_pool - clusterpuzzle_quests
+	dd	lobby_pool - clusterpuzzle_quests
 
 ; length of pool name plus 1, hash of pool name, first dword of pool name, then the same for puzzle type
 live_gyroRing_pool:
 ; "live", "gyroRing"
 	dd	5, 0xcf22bcd9, 'l' + 'i' * 0x10000, 9, 0x74c2fa6b, 'g' + 'y' * 0x10000
 	dd	0
-lobby_and_hardCOWYC_pool:
-; "Lobby", "logicGrid"
-	dd	6, 0x884c4b9e, 'L' + 'o' * 0x10000, 10, 0x71438cc7, 'l' + 'o' * 0x10000
+hardCOWYC_pool:
 ; "HardCOWYC", "logicGrid"
 	dd	10, 0xf93b2590, 'H' + 'a' * 0x10000, 10, 0x71438cc7, 'l' + 'o' * 0x10000
 	dd	0
@@ -3494,6 +3493,10 @@ lostgrids_pool:
 	dd	17, 0x79fd17d2, 'l' + 'o' * 0x10000, 19, 0x4de90c31, 'c' + 'o' * 0x10000
 ; "lostgridsMusic", "musicGrid"
 	dd	15, 0x7a18c13f, 'l' + 'o' * 0x10000, 10, 0xebb0eebf, 'm' + 'u' * 0x10000
+	dd	0
+lobby_pool:
+; "Lobby", "logicGrid"
+	dd	6, 0x884c4b9e, 'L' + 'o' * 0x10000, 10, 0x71438cc7, 'l' + 'o' * 0x10000
 	dd	0
 
 patch_failed_text:
