@@ -1027,6 +1027,13 @@ end if
 	or	[rbx + .patch_failed - .orig_dll_name], cl
 .skip_rings_quest_patch:
 	add	rdi, ADungeon_OnPlayerBeginInteract_offset+1-getcompletionpercentage_offset
+	lea	rcx, [strGameplay]
+	lea	rdx, [strEnteringQuestHidesUI]
+	xor	r8d, r8d
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	test	eax, eax
+	jz	.skip_unfocus_dungeoninfo_patch
 	mov	rax, ADungeon_OnPlayerBeginInteract_expected
 	mov	cl, 1
 	cmp	[rdi-13h], rax
@@ -1042,6 +1049,7 @@ end if
 	mov	cl, 0
 .done_unfocus_dungeoninfo_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
+.skip_unfocus_dungeoninfo_patch:
 	add	rdi, hiddencube_makesoundevent_offset-ADungeon_OnPlayerBeginInteract_offset-1
 	cmp	[rbx + .patch_failed - .orig_dll_name], 0
 	jnz	.skip_hiddencube_soundpatch
@@ -3566,6 +3574,7 @@ strNotifyPuzzleSpawns	du	'NotifyPuzzleSpawns', 0
 strHiddenCubeSoundVolumePercentage	du	'HiddenCubeSoundVolumePercentage', 0
 strPreferUnsolvedClusterPuzzles	du	'PreferUnsolvedClusterPuzzles', 0
 strRingsQuestCompletionMode	du	'RingsQuestCompletionMode', 0
+strEnteringQuestHidesUI	du	'EnteringQuestHidesUI', 0
 strMod		du	'Mod', 0
 strVersion	du	'Version', 0
 strPakFileHash	du	'PakFileHash', 0
