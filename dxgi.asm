@@ -122,6 +122,7 @@ hiddencube_EndPlay_expected = 0xFA8B4430EC834857
 EventInstanceIsValid_offset = 0x0DA3F10
 EventInstanceSetVolume_offset = 0x0DA42A0
 EventInstanceStop_offset = 0xDA42F0
+PlayEventAttached_offset = 0xDA5C00
 
 sophiarune_vmt800_offset = 0x45B2DE0
 sophiarune_vmt800_expected = 0x05AD81B6
@@ -160,6 +161,9 @@ ADungeon_OnPlayerBeginInteract_offset = 0x12BA56E
 ADungeon_OnPlayerBeginInteract_expected = 0x8844000002F0B389
 UUserWidget_AddToViewport_offset = 0x2BC82B0
 UUserWidget_AddToViewport_expected = 0xD233C28B44018B48
+; also lower sound volume
+ADungeon_OnPlayerBeginInteract_offset2 = 0x12BA4D9
+ADungeon_OnPlayerBeginInteract_expected2 = 0xE8000007908E8B48
 
 ASandboxGameMode_vmt_Tick_offset = 0x468C3B8
 ASandboxGameMode_Tick_expected = 0xA486FF41
@@ -979,6 +983,8 @@ end if
 	mov	[EventInstanceSetVolume], rax
 	add	rax, EventInstanceStop_offset-EventInstanceSetVolume_offset
 	mov	[EventInstanceStop], rax
+	add	rax, PlayEventAttached_offset-EventInstanceStop_offset
+	mov	[PlayEventAttached], rax
 	call	make_writable
 	lea	rax, [hook_AHiddenCube_EndPlay]
 	mov	[rdi], rax
@@ -1033,7 +1039,7 @@ end if
 	mov	r9, rbx
 	call	[GetPrivateProfileIntW]
 	test	eax, eax
-	jz	.skip_unfocus_dungeoninfo_patch
+	jnz	.skip_unfocus_dungeoninfo_patch
 	mov	rax, ADungeon_OnPlayerBeginInteract_expected
 	mov	cl, 1
 	cmp	[rdi-13h], rax
@@ -1050,22 +1056,37 @@ end if
 .done_unfocus_dungeoninfo_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
 .skip_unfocus_dungeoninfo_patch:
-	add	rdi, hiddencube_makesoundevent_offset-ADungeon_OnPlayerBeginInteract_offset-1
+	add	rdi, ADungeon_OnPlayerBeginInteract_offset2-ADungeon_OnPlayerBeginInteract_offset-1
+	cmp	[rbx + .patch_failed - .orig_dll_name], 0
+	jnz	.skip_dungeoninfo_sound_patch
+	lea	rdx, [strIslandQuest]
+	call	get_sound_volume
+	movss	[islandquest_volume], xmm0
+	lea	rdx, [strMainlandQuest]
+	call	get_sound_volume
+	movss	[mainlandquest_volume], xmm0
+	mov	cl, 1
+	mov	rax, ADungeon_OnPlayerBeginInteract_expected2
+	cmp	[rdi], rax
+	jnz	.done_dungeoninfo_sound_patch
+	call	make_writable
+	mov	word [rdi], 0xB848
+	lea	rax, [hook_ADungeon_OnPlayerBeginInteract_makesound]
+	mov	[rdi+2], rax
+	mov	word [rdi+10], 0xD0FF
+	call	restore_protection
+	mov	cl, 0
+.done_dungeoninfo_sound_patch:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
+.skip_dungeoninfo_sound_patch:
+	add	rdi, hiddencube_makesoundevent_offset-ADungeon_OnPlayerBeginInteract_offset2
 	cmp	[rbx + .patch_failed - .orig_dll_name], 0
 	jnz	.skip_hiddencube_soundpatch
-	lea	rcx, [strGameplay]
-	lea	rdx, [strHiddenCubeSoundVolumePercentage]
-	or	r8d, -1
-	mov	r9, rbx
-	call	[GetPrivateProfileIntW]
-	test	eax, eax
-	js	.skip_hiddencube_soundpatch
-	mov	ecx, 1000
-	cmp	eax, ecx
-	cmova	eax, ecx
-	cvtsi2ss xmm0, eax
-	mulss	xmm0, [one_percent]
+	lea	rdx, [strHiddenCube]
+	call	get_sound_volume
 	movss	[hiddencube_sound_volume], xmm0
+	comiss	xmm0, dword [z_one+8]
+	jz	.skip_hiddencube_soundpatch
 	mov	cl, 1
 	mov	rax, hiddencube_makesoundevent_expected
 	cmp	[rdi+2], rax
@@ -2741,6 +2762,25 @@ hook_gridsolve_check:
 	jmp	[gridsolve_continue2]
 .end:
 
+get_sound_volume:
+	sub	rsp, 28h
+	lea	rcx, [strSoundVolume]
+	or	r8d, -1
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	movss	xmm0, dword [z_one+8]
+	test	eax, eax
+	js	.done
+	mov	ecx, 1000
+	cmp	eax, ecx
+	cmova	eax, ecx
+	cvtsi2ss xmm0, eax
+	mulss	xmm0, [one_percent]
+.done:
+	add	rsp, 28h
+	ret
+.end:
+
 hook_AHiddenCube_EndPlay:
 	sub	rsp, 28h
 	mov	[rsp+20h], rcx
@@ -2769,6 +2809,31 @@ hook_AHiddenCube_makesoundevent:
 	mov	[rdi+508h], rax
 	mov	r8d, 1
 	add	rsp, 28h
+	ret
+.end:
+
+hook_ADungeon_OnPlayerBeginInteract_makesound:
+	sub	rsp, 48h
+.prolog_size = $ - hook_ADungeon_OnPlayerBeginInteract_makesound
+	mov	byte [rsp+38h], 1
+	mov	byte [rsp+30h], 1
+	mov	byte [rsp+28h], 1
+	mov	[rsp+20h], r12d
+	mov	rcx, [rsi+790h]
+	call	[PlayEventAttached]
+	test	rax, rax
+	jz	.done
+	mov	rcx, [rax+2C8h]
+	movss	xmm1, [islandquest_volume]
+	mov	dl, [rsi+518h]	; ADungeon::Type
+	sub	dl, 1
+	cmp	dl, 1	; 1 = MainEnclave, 2 = SideEnclave
+	jbe	@f
+	movss	xmm1, [mainlandquest_volume]
+@@:
+	call	[EventInstanceSetVolume]
+.done:
+	add	rsp, 48h
 	ret
 .end:
 
@@ -3191,8 +3256,10 @@ end if
 	dd	rva hook_savesolvedtime1, rva hook_savesolvedtime1.end, rva hook_savesolvedtime1_unwind
 	dd	rva hook_savesolvedtime2, rva hook_savesolvedtime2.end, rva hook_savesolvedtime2_unwind
 	dd	rva hook_gridsolve_check, rva hook_gridsolve_check.end, rva hook_gridsolve_check_unwind
+	dd	rva get_sound_volume, rva get_sound_volume.end, rva make_writable_unwind
 	dd	rva hook_AHiddenCube_EndPlay, rva hook_AHiddenCube_EndPlay.end, rva make_writable_unwind
 	dd	rva hook_AHiddenCube_makesoundevent, rva hook_AHiddenCube_makesoundevent.end, rva make_writable_unwind
+	dd	rva hook_ADungeon_OnPlayerBeginInteract_makesound, rva hook_ADungeon_OnPlayerBeginInteract_makesound.end, rva hook_ADungeon_OnPlayerBeginInteract_makesound_unwind
 	dd	rva hook_sophiarune_vmt800, rva hook_sophiarune_vmt800.end, rva hook_sophiarune_vmt800_unwind
 	dd	rva clusterpuzzles_hook, rva clusterpuzzles_hook.end, rva clusterpuzzles_hook_unwind
 	dd	rva hook_getcompletionpercentage, rva hook_getcompletionpercentage.end, rva hook_getcompletionpercentage_unwind
@@ -3430,6 +3497,11 @@ start_unwind_data
 	db	0, 0C0h	; UWOP_PUSH_NONVOL r12
 	db	0, 50h	; UWOP_PUSH_NONVOL rbp
 end_unwind_data
+hook_ADungeon_OnPlayerBeginInteract_makesound_unwind:
+	db	1, hook_ADungeon_OnPlayerBeginInteract_makesound.prolog_size, hook_ADungeon_OnPlayerBeginInteract_makesound_unwind.size / 2, 0
+start_unwind_data
+	db	hook_ADungeon_OnPlayerBeginInteract_makesound.prolog_size, 2 + ((48h - 8) / 8) * 10h
+end_unwind_data
 hook_sophiarune_vmt800_unwind:
 	db	1, hook_sophiarune_vmt800.prolog_size, hook_sophiarune_vmt800_unwind.size / 2, 0
 start_unwind_data
@@ -3571,10 +3643,13 @@ strAddChestsMarker	du	'AddChestsMarker', 0
 end if
 strCheaperMusicForesight	du	'CheaperMusicForesight', 0
 strNotifyPuzzleSpawns	du	'NotifyPuzzleSpawns', 0
-strHiddenCubeSoundVolumePercentage	du	'HiddenCubeSoundVolumePercentage', 0
 strPreferUnsolvedClusterPuzzles	du	'PreferUnsolvedClusterPuzzles', 0
 strRingsQuestCompletionMode	du	'RingsQuestCompletionMode', 0
 strEnteringQuestHidesUI	du	'EnteringQuestHidesUI', 0
+strSoundVolume	du	'SoundVolume', 0
+strHiddenCube	du	'HiddenCube', 0
+strIslandQuest	du	'IslandQuest', 0
+strMainlandQuest	du	'MainlandQuest', 0
 strMod		du	'Mod', 0
 strVersion	du	'Version', 0
 strPakFileHash	du	'PakFileHash', 0
@@ -3620,6 +3695,7 @@ APuzzleBase_EndPlay	dq	?
 EventInstanceIsValid	dq	?
 EventInstanceSetVolume	dq	?
 EventInstanceStop	dq	?
+PlayEventAttached	dq	?
 extra_grid_icons	rq	3
 weakobjectptr_get	dq	?
 weakobjectptr_assign	dq	?
@@ -3661,6 +3737,8 @@ max_backups	dd	?
 backup_period	dd	?
 last_backup_time	dd	?
 hiddencube_sound_volume	dd	?
+islandquest_volume	dd	?
+mainlandquest_volume	dd	?
 ignore_nearest_unsolved	rd	3
 backup_made	db	?
 use_temporary_file db	?
