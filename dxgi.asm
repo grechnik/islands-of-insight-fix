@@ -165,6 +165,13 @@ UUserWidget_AddToViewport_expected = 0xD233C28B44018B48
 ADungeon_OnPlayerBeginInteract_offset2 = 0x12BA4D9
 ADungeon_OnPlayerBeginInteract_expected2 = 0xE8000007908E8B48
 
+; APuzzlePanel::PlayMusicNote has two calls of PlayEventAttached,
+; one for drum events (hihat/kick/snare/crash),
+; another for pitch events (xylophone_*)
+playmusicnote_drum_offset = 0x13AA13B
+playmusicnote_pitch_offset = 0x13AA47D
+playmusicnote_expected = 0x41000005D0B6634C
+
 ASandboxGameMode_vmt_Tick_offset = 0x468C3B8
 ASandboxGameMode_Tick_expected = 0xA486FF41
 ASandboxGameMode_vmt_InitGameMode_offset = 0x468C8A0
@@ -1058,7 +1065,7 @@ end if
 .skip_unfocus_dungeoninfo_patch:
 	add	rdi, ADungeon_OnPlayerBeginInteract_offset2-ADungeon_OnPlayerBeginInteract_offset-1
 	cmp	[rbx + .patch_failed - .orig_dll_name], 0
-	jnz	.skip_dungeoninfo_sound_patch
+	jnz	.skip_dungeoninfo_and_musicgrid_sound_patch
 	lea	rdx, [strIslandQuest]
 	call	get_sound_volume
 	movss	[islandquest_volume], xmm0
@@ -1078,7 +1085,39 @@ end if
 	mov	cl, 0
 .done_dungeoninfo_sound_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
-.skip_dungeoninfo_sound_patch:
+	lea	rdx, [strMusicGridDrum]
+	call	get_sound_volume
+	movss	[musicgrid_drum_volume], xmm0
+	lea	rdx, [strMusicGridPitch]
+	call	get_sound_volume
+	movss	[musicgrid_pitch_volume], xmm0
+	mov	cl, 1
+	mov	rax, playmusicnote_expected
+	cmp	[rdi+playmusicnote_drum_offset-ADungeon_OnPlayerBeginInteract_offset2], rax
+	jnz	.done_musicgrid_sound_patch
+	cmp	[rdi+playmusicnote_pitch_offset-ADungeon_OnPlayerBeginInteract_offset2], rax
+	jnz	.done_musicgrid_sound_patch
+	add	rdi, playmusicnote_drum_offset-ADungeon_OnPlayerBeginInteract_offset2
+	call	make_writable
+	mov	word [rdi], 0xB848
+	lea	rax, [hook_playmusicnote_drum]
+	mov	[rdi+2], rax
+	mov	word [rdi+10], 0xD0FF
+	mov	byte [rdi+12], 0xB9
+	call	restore_protection
+	add	rdi, playmusicnote_pitch_offset-playmusicnote_drum_offset
+	call	make_writable
+	mov	word [rdi], 0xB848
+	lea	rax, [hook_playmusicnote_pitch]
+	mov	[rdi+2], rax
+	mov	word [rdi+10], 0xD0FF
+	mov	byte [rdi+12], 0xB9
+	call	restore_protection
+	add	rdi, ADungeon_OnPlayerBeginInteract_offset2-playmusicnote_pitch_offset
+	mov	cl, 0
+.done_musicgrid_sound_patch:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
+.skip_dungeoninfo_and_musicgrid_sound_patch:
 	add	rdi, hiddencube_makesoundevent_offset-ADungeon_OnPlayerBeginInteract_offset2
 	cmp	[rbx + .patch_failed - .orig_dll_name], 0
 	jnz	.skip_hiddencube_soundpatch
@@ -2837,6 +2876,30 @@ hook_ADungeon_OnPlayerBeginInteract_makesound:
 	ret
 .end:
 
+hook_playmusicnote_drum:
+	sub	rsp, 28h
+	movss	xmm1, [musicgrid_drum_volume]
+	mov	rcx, [rbx+2C8h]
+	call	[EventInstanceSetVolume]
+	movsxd	r14, [rsi+5D0h]
+	lea	eax, [r14+1]
+	mov	[rsi+5D0h], eax
+	add	rsp, 28h
+	ret
+.end:
+
+hook_playmusicnote_pitch:
+	sub	rsp, 28h
+	movss	xmm1, [musicgrid_pitch_volume]
+	mov	rcx, [rbx+2C8h]
+	call	[EventInstanceSetVolume]
+	movsxd	r14, [rsi+5D0h]
+	lea	eax, [r14+1]
+	mov	[rsi+5D0h], eax
+	add	rsp, 28h
+	ret
+.end:
+
 hook_sophiarune_vmt800:
 	push	rbx
 .prolog_offs1 = $ - hook_sophiarune_vmt800
@@ -3260,6 +3323,8 @@ end if
 	dd	rva hook_AHiddenCube_EndPlay, rva hook_AHiddenCube_EndPlay.end, rva make_writable_unwind
 	dd	rva hook_AHiddenCube_makesoundevent, rva hook_AHiddenCube_makesoundevent.end, rva make_writable_unwind
 	dd	rva hook_ADungeon_OnPlayerBeginInteract_makesound, rva hook_ADungeon_OnPlayerBeginInteract_makesound.end, rva hook_ADungeon_OnPlayerBeginInteract_makesound_unwind
+	dd	rva hook_playmusicnote_drum, rva hook_playmusicnote_drum.end, rva make_writable_unwind
+	dd	rva hook_playmusicnote_pitch, rva hook_playmusicnote_pitch.end, rva make_writable_unwind
 	dd	rva hook_sophiarune_vmt800, rva hook_sophiarune_vmt800.end, rva hook_sophiarune_vmt800_unwind
 	dd	rva clusterpuzzles_hook, rva clusterpuzzles_hook.end, rva clusterpuzzles_hook_unwind
 	dd	rva hook_getcompletionpercentage, rva hook_getcompletionpercentage.end, rva hook_getcompletionpercentage_unwind
@@ -3650,6 +3715,8 @@ strSoundVolume	du	'SoundVolume', 0
 strHiddenCube	du	'HiddenCube', 0
 strIslandQuest	du	'IslandQuest', 0
 strMainlandQuest	du	'MainlandQuest', 0
+strMusicGridDrum	du	'MusicGridDrum', 0
+strMusicGridPitch	du	'MusicGridPitch', 0
 strMod		du	'Mod', 0
 strVersion	du	'Version', 0
 strPakFileHash	du	'PakFileHash', 0
@@ -3739,6 +3806,8 @@ last_backup_time	dd	?
 hiddencube_sound_volume	dd	?
 islandquest_volume	dd	?
 mainlandquest_volume	dd	?
+musicgrid_drum_volume	dd	?
+musicgrid_pitch_volume	dd	?
 ignore_nearest_unsolved	rd	3
 backup_made	db	?
 use_temporary_file db	?
