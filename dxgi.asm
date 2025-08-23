@@ -1002,12 +1002,10 @@ end if
 	add	rdi, getcompletionpercentage_offset-hiddencube_vmt_EndPlay_offset
 	lea	rcx, [strGameplay]
 	lea	rdx, [strRingsQuestCompletionMode]
-	xor	r8d, r8d
+	mov	r8d, 2
 	mov	r9, rbx
 	call	[GetPrivateProfileIntW]
 	mov	[rings_quest_completion_mode], al
-	test	al, al
-	jz	.skip_rings_quest_patch
 	mov	cl, 1
 	mov	rax, getcompletionpercentage_expected
 	cmp	[rdi], rax
@@ -3065,10 +3063,13 @@ hook_getcompletionpercentage:
 	sub	eax, 25300
 	cmp	eax, 5
 	jb	.clusterpuzzle_quest
+@@:
 	mov	[rsp+20h], r14
 	movsxd	rbx, dword [rcx+7C8h]
 	jmp	[getcompletionpercentage_continue]
 .rings_quest:
+	cmp	[rings_quest_completion_mode], 0
+	jz	@b
 	xorps	xmm0, xmm0
 	mov	rax, [rcx+628h]	; ADungeon::MyQuest
 ; we could be more specific than just returning zero for unfinished objectives,
@@ -3117,10 +3118,13 @@ hook_getownedpuzzlecompletiondata:
 	sub	eax, 25300
 	cmp	eax, 5
 	jb	.clusterpuzzle_quest
+@@:
 	mov	[rsp+20h], rdi
 	movsxd	rbx, dword [rcx+7C8h]
 	jmp	[getownedpuzzlecompletiondata_continue]
 .rings_quest:
+	cmp	[rings_quest_completion_mode], 0
+	jz	@b
 	lea	rsi, [live_gyroRing_pool]
 	jmp	.common
 .clusterpuzzle_quest:
