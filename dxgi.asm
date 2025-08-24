@@ -431,7 +431,7 @@ end virtual
 	add	rdi, call_addrewards_offset1 - mirrormaze_size_check_offset
 	lea	rcx, [strGameplay]
 	lea	rdx, [strFixQuestRewards]
-	xor	r8d, r8d
+	mov	r8d, 1
 	mov	r9, rbx
 	call	[GetPrivateProfileIntW]
 	test	eax, eax
@@ -488,7 +488,7 @@ end virtual
 	add	rdi, sightseer_capture_offset - autoquestcheck_offset
 	lea	rcx, [strGameplay]
 	lea	rdx, [strHighQualitySightSeerCapture]
-	xor	r8d, r8d
+	mov	r8d, 1
 	mov	r9, rbx
 	call	[GetPrivateProfileIntW]
 	test	eax, eax
@@ -1064,12 +1064,12 @@ end if
 	add	rdi, ADungeon_OnPlayerBeginInteract_offset2-ADungeon_OnPlayerBeginInteract_offset-1
 	cmp	[rbx + .patch_failed - .orig_dll_name], 0
 	jnz	.skip_dungeoninfo_and_musicgrid_sound_patch
-	lea	rdx, [strIslandQuest]
+	lea	rdx, [strEnteringEnclave]
 	call	get_sound_volume
-	movss	[islandquest_volume], xmm0
-	lea	rdx, [strMainlandQuest]
+	movss	[enclave_volume], xmm0
+	lea	rdx, [strEnteringSideQuest]
 	call	get_sound_volume
-	movss	[mainlandquest_volume], xmm0
+	movss	[sidequest_volume], xmm0
 	mov	cl, 1
 	mov	rax, ADungeon_OnPlayerBeginInteract_expected2
 	cmp	[rdi], rax
@@ -1083,10 +1083,10 @@ end if
 	mov	cl, 0
 .done_dungeoninfo_sound_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
-	lea	rdx, [strMusicGridDrum]
+	lea	rdx, [strMusicGridDrums]
 	call	get_sound_volume
 	movss	[musicgrid_drum_volume], xmm0
-	lea	rdx, [strMusicGridPitch]
+	lea	rdx, [strMusicGridNotes]
 	call	get_sound_volume
 	movss	[musicgrid_pitch_volume], xmm0
 	mov	cl, 1
@@ -2861,12 +2861,12 @@ hook_ADungeon_OnPlayerBeginInteract_makesound:
 	test	rax, rax
 	jz	.done
 	mov	rcx, [rax+2C8h]
-	movss	xmm1, [islandquest_volume]
+	movss	xmm1, [enclave_volume]
 	mov	dl, [rsi+518h]	; ADungeon::Type
 	sub	dl, 1
 	cmp	dl, 1	; 1 = MainEnclave, 2 = SideEnclave
 	jbe	@f
-	movss	xmm1, [mainlandquest_volume]
+	movss	xmm1, [sidequest_volume]
 @@:
 	call	[EventInstanceSetVolume]
 .done:
@@ -3717,10 +3717,10 @@ strRingsQuestCompletionMode	du	'RingsQuestCompletionMode', 0
 strEnteringQuestHidesUI	du	'EnteringQuestHidesUI', 0
 strSoundVolume	du	'SoundVolume', 0
 strHiddenCube	du	'HiddenCube', 0
-strIslandQuest	du	'IslandQuest', 0
-strMainlandQuest	du	'MainlandQuest', 0
-strMusicGridDrum	du	'MusicGridDrum', 0
-strMusicGridPitch	du	'MusicGridPitch', 0
+strEnteringEnclave	du	'EnteringEnclave', 0
+strEnteringSideQuest	du	'EnteringSideQuest', 0
+strMusicGridDrums	du	'MusicGridDrums', 0
+strMusicGridNotes	du	'MusicGridNotes', 0
 strMod		du	'Mod', 0
 strVersion	du	'Version', 0
 strPakFileHash	du	'PakFileHash', 0
@@ -3808,8 +3808,8 @@ max_backups	dd	?
 backup_period	dd	?
 last_backup_time	dd	?
 hiddencube_sound_volume	dd	?
-islandquest_volume	dd	?
-mainlandquest_volume	dd	?
+enclave_volume	dd	?
+sidequest_volume	dd	?
 musicgrid_drum_volume	dd	?
 musicgrid_pitch_volume	dd	?
 ignore_nearest_unsolved	rd	3
