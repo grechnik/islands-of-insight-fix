@@ -343,6 +343,9 @@ end virtual
 	jnz	.skip_savegame_patch
 	lea	rcx, [save_critsect]
 	call	[InitializeCriticalSection]
+	lea	rcx, [unhandled_exception_filter]
+	call	[SetUnhandledExceptionFilter]
+	mov	[prev_unhandled_exception_filter], rax
 	lea	rcx, [strSaves]
 	lea	rdx, [strViaTemporaryFile]
 	xor	r8d, r8d
@@ -355,11 +358,6 @@ end virtual
 	mov	r9, rbx
 	call	[GetPrivateProfileIntW]
 	mov	[max_backups], eax
-	test	eax, eax
-	jg	@f
-	cmp	[use_temporary_file], 0
-	jz	.skip_savegame_patch
-@@:
 	lea	rcx, [strSaves]
 	lea	rdx, [strBackupPeriod]
 	xor	r8d, r8d
@@ -1526,10 +1524,36 @@ restore_protection:
 	ret
 .end:
 
+; The render thread can crash while the main thread writes a save.
+; In this case, we want to delay the crash handler until the saving is finished;
+; our patch wraps the saving into a critical section,
+; trying to lock it here provides the necessary delay.
+; In the reverse case, when the main thread is about to start saving
+; while the render thread crashes, we want to avoid saving at all
+; because the program can cease to exist at any moment;
+; this part is handled by a check in save_game_patched.
+; If the main thread crashes, this code does nothing useful,
+; but it makes no harm either (recursively locking a critical section is allowed).
+unhandled_exception_filter:
+	sub	rsp, 28h
+	mov	[rsp+20h], rcx
+	lea	rcx, [save_critsect]
+	call	[EnterCriticalSection]
+	mov	[crashed], 1
+	lea	rcx, [save_critsect]
+	call	[LeaveCriticalSection]
+	mov	rcx, [rsp+20h]
+	add	rsp, 28h
+	db	0x48
+	jmp	[prev_unhandled_exception_filter]
+.end:
+
 save_game_patched:
 	mov	[rsp+20h], rax ; save useful data
 	lea	rcx, [save_critsect]
 	call	[EnterCriticalSection]
+	cmp	[crashed], 0
+	jnz	.done2
 	cmp	[max_backups], 0
 	jle	.no_backup
 	call	[GetTickCount]
@@ -3295,10 +3319,11 @@ load export_name3_rva dword from (export_data - rva export_data + export_name_ta
 align 4
 data 3  ; IMAGE_DIRECTORY_ENTRY_EXCEPTION
 	dd	rva CreateDXGIFactory, rva CreateDXGIFactory.end, rva CreateDXGIFactory_unwind
-	dd	rva save_game_patched, rva save_game_patched.end, rva save_game_patched_unwind
-	dd	rva make_backup, rva make_backup.end, rva make_backup_unwind
 	dd	rva make_writable.large, rva make_writable.end, rva make_writable_unwind
 	dd	rva restore_protection.large, rva restore_protection.end, rva make_writable_unwind
+	dd	rva unhandled_exception_filter, rva unhandled_exception_filter.end, rva make_writable_unwind
+	dd	rva save_game_patched, rva save_game_patched.end, rva save_game_patched_unwind
+	dd	rva make_backup, rva make_backup.end, rva make_backup_unwind
 	dd	rva find_nearest_unsolved, rva find_nearest_unsolved.end, rva find_nearest_unsolved_unwind
 	dd	rva additional_markers, rva additional_markers.end, rva additional_markers_unwind
 	dd	rva hook_putmarker.start_stack_use, rva hook_putmarker.end, rva make_writable_unwind
@@ -3778,6 +3803,7 @@ FSkeletalMeshMerge_constructor	dq	?
 getcompletionpercentage_continue	dq	?
 getdungeoncompletionpercentage	dq	?
 getownedpuzzlecompletiondata_continue	dq	?
+prev_unhandled_exception_filter	dq	?
 
 if add_chests
 original_initgamemode	dq	?
@@ -3821,6 +3847,7 @@ min_logicgrid_difficulty	db	?
 current_active_marker_type	db	?
 giskraken_init_called	db	?
 rings_quest_completion_mode	db	?
+crashed		db	?
 if debug_chests
 add_chests_marker	db	?
 end if
