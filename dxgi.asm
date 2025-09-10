@@ -172,6 +172,9 @@ playmusicnote_drum_offset = 0x13AA13B
 playmusicnote_pitch_offset = 0x13AA47D
 playmusicnote_expected = 0x41000005D0B6634C
 
+ARacingRings_GetSandboxMilestones_offset = 0x142EFD4
+ARacingRings_GetSandboxMilestones_expected = 0x49C95B0FCD6E0F41
+
 ASandboxGameMode_vmt_Tick_offset = 0x468C3B8
 ASandboxGameMode_Tick_expected = 0xA486FF41
 ASandboxGameMode_vmt_InitGameMode_offset = 0x468C8A0
@@ -1114,7 +1117,30 @@ end if
 .done_musicgrid_sound_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
 .skip_dungeoninfo_and_musicgrid_sound_patch:
-	add	rdi, hiddencube_makesoundevent_offset-ADungeon_OnPlayerBeginInteract_offset2
+	add	rdi, ARacingRings_GetSandboxMilestones_offset-ADungeon_OnPlayerBeginInteract_offset2
+	lea	rcx, [strGameplay]
+	lea	rdx, [strGrindGlideRings]
+	xor	r8d, r8d
+	mov	r9, rbx
+	call	[GetPrivateProfileIntW]
+	test	eax, eax
+	jz	.skip_gliderings_patch
+	mov	cl, 1
+	mov	rax, ARacingRings_GetSandboxMilestones_expected
+	cmp	[rdi+1], rax
+	jnz	.done_gliderings_patch
+	call	make_writable
+	mov	word [rdi], 0xB848
+	lea	rax, [hook_gliderings]
+	mov	[rdi+2], rax
+	mov	word [rdi+10], 0xD0FF
+	mov	byte [rdi+12], 0x90
+	call	restore_protection
+	mov	cl, 0
+.done_gliderings_patch:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
+.skip_gliderings_patch:
+	add	rdi, hiddencube_makesoundevent_offset-ARacingRings_GetSandboxMilestones_offset
 	cmp	[rbx + .patch_failed - .orig_dll_name], 0
 	jnz	.skip_hiddencube_soundpatch
 	lea	rdx, [strHiddenCube]
@@ -3281,6 +3307,24 @@ calc_solved_in_pool:
 	ret
 .end:
 
+hook_gliderings:
+	sub	rsp, 28h
+	mov	rcx, rsi
+	mov	rdx, [rbx+280h]
+	mov	rax, [rcx]
+	call	qword [rax+728h]	; APuzzleBase::IsSolvedBy
+	test	al, al
+	jnz	@f
+	xor	r13d, r13d
+@@:
+	movd	xmm1, r13d
+	cvtdq2ps xmm1, xmm1
+	mov	rcx, r15
+	mov	edx, edi
+	add	rsp, 28h
+	ret
+.end:
+
 section '.rdata' data readable
 ; 100.0 to convert meters -> UE units, 2**-31 to deal with our random method
 hide_radius_multiplier	dd	0x33480000, 0x33480000, 0x33480000, 0
@@ -3359,6 +3403,7 @@ end if
 	dd	rva hook_getcompletionpercentage, rva hook_getcompletionpercentage.end, rva hook_getcompletionpercentage_unwind
 	dd	rva hook_getownedpuzzlecompletiondata, rva hook_getownedpuzzlecompletiondata.end, rva hook_getcompletionpercentage_unwind
 	dd	rva calc_solved_in_pool, rva calc_solved_in_pool.end, rva make_writable_unwind
+	dd	rva hook_gliderings, rva hook_gliderings.end, rva make_writable_unwind
 end data
 
 macro start_unwind_data {
@@ -3740,6 +3785,7 @@ strNotifyPuzzleSpawns	du	'NotifyPuzzleSpawns', 0
 strPreferUnsolvedClusterPuzzles	du	'PreferUnsolvedClusterPuzzles', 0
 strRingsQuestCompletionMode	du	'RingsQuestCompletionMode', 0
 strEnteringQuestHidesUI	du	'EnteringQuestHidesUI', 0
+strGrindGlideRings	du	'GrindGlideRings', 0
 strSoundVolume	du	'SoundVolume', 0
 strHiddenCube	du	'HiddenCube', 0
 strEnteringEnclave	du	'EnteringEnclave', 0
