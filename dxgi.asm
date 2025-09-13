@@ -175,6 +175,11 @@ playmusicnote_expected = 0x41000005D0B6634C
 ARacingRings_GetSandboxMilestones_offset = 0x142EFD4
 ARacingRings_GetSandboxMilestones_expected = 0x49C95B0FCD6E0F41
 
+cylindergrid_island_highlight_offset1 = 0x139DDEB
+cylindergrid_island_highlight_expected1 = 0x0F0000057CB73840
+cylindergrid_island_highlight_offset2 = 0x139DF54
+cylindergrid_island_highlight_expected2 = 0x48C1048B49C36348
+
 ASandboxGameMode_vmt_Tick_offset = 0x468C3B8
 ASandboxGameMode_Tick_expected = 0xA486FF41
 ASandboxGameMode_vmt_InitGameMode_offset = 0x468C8A0
@@ -1425,6 +1430,28 @@ end if
 	call	restore_protection
 	mov	cl, 0
 .done_gridsolve_patch:
+	or	[rbx + .patch_failed - .orig_dll_name], cl
+	mov	cl, 1
+	mov	rax, cylindergrid_island_highlight_expected1
+	cmp	[rdi+cylindergrid_island_highlight_offset1-gridsolve_offset], rax
+	jnz	.done_cylindergrid_highlight_patch
+	mov	rax, cylindergrid_island_highlight_expected2
+	cmp	[rdi+cylindergrid_island_highlight_offset2-gridsolve_offset], rax
+	jnz	.done_cylindergrid_highlight_patch
+	add	rdi, cylindergrid_island_highlight_offset1+9-gridsolve_offset
+	call	make_writable
+	and	dword [rdi], 0
+	call	restore_protection
+	add	rdi, cylindergrid_island_highlight_offset2-(cylindergrid_island_highlight_offset1+9)
+	call	make_writable
+	mov	word [rdi], 0xB848
+	lea	rax, [cylindergrid_island_highlight_patch]
+	mov	[rdi+2], rax
+	mov	word [rdi+10], 0xD0FF
+	call	restore_protection
+	add	rdi, gridsolve_offset-cylindergrid_island_highlight_offset2
+	mov	cl, 0
+.done_cylindergrid_highlight_patch:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
 	mov	cl, 1
 	add	rdi, mergemeshes_offset - gridsolve_offset
@@ -3324,6 +3351,41 @@ hook_gliderings:
 	add	rsp, 28h
 	ret
 .end:
+
+cylindergrid_island_highlight_patch:
+	mov	rcx, [rbp-68h]	; UPuzzleGrid* this
+	add	rcx, 570h
+	mov	eax, [r9+rbx*8]
+	test	byte [rcx+0Ch], 2
+	jz	.done_x
+@@:
+	test	eax, eax
+	jns	@f
+	add	eax, [rcx]
+	jmp	@b
+@@:
+	cmp	eax, [rcx]
+	jl	.done_x
+	sub	eax, [rcx]
+	jmp	@b
+.done_x:
+	mov	[rsp+40h], eax
+	mov	eax, [r9+rbx*8+4]
+	test	byte [rcx+0Ch], 1
+	jz	.done_y
+@@:
+	test	eax, eax
+	jns	@f
+	add	eax, [rcx+4]
+	jmp	@b
+@@:
+	cmp	eax, [rcx+4]
+	jl	.done_y
+	sub	eax, [rcx+4]
+	jmp	@b
+.done_y:
+	mov	[rsp+44h], eax
+	ret
 
 section '.rdata' data readable
 ; 100.0 to convert meters -> UE units, 2**-31 to deal with our random method
