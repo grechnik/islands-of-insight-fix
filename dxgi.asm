@@ -124,6 +124,8 @@ EventInstanceSetVolume_offset = 0x0DA42A0
 EventInstanceStop_offset = 0xDA42F0
 PlayEventAttached_offset = 0xDA5C00
 
+sophiarune_vmt_isawakenedby_offset = 0x45B2D58
+sophiarune_vmt_isawakenedby_expected = 0x06D0B18D
 sophiarune_vmt800_offset = 0x45B2DE0
 sophiarune_vmt800_expected = 0x05AD81B6
 weakobjectptr_get_offset = 0x195D240
@@ -226,7 +228,6 @@ virtual at 0
 .func	dd	?
 .tmp2	dd	?
 .patch_failed	db	?
-.need_sophiarune_marker	db	?
 	align 2
 .tmp	dd	?	; used by make_writable/restore_protection
 .orig_dll_name:
@@ -517,7 +518,6 @@ end virtual
 	mov	r9, rbx
 	call	[GetPrivateProfileIntW]
 	mov	[show_nearest_unsolved], al
-	mov	[rbx + .need_sophiarune_marker - .orig_dll_name], al
 	lea	rcx, [strGameplay]
 	lea	rdx, [strShowNearestLogicGrid]
 	xor	r8d, r8d
@@ -1177,7 +1177,6 @@ if add_chests
 	test	eax, eax
 	jz	.skip_chests_patch2
 	mov	cl, 1
-	or	[rbx + .need_sophiarune_marker - .orig_dll_name], cl
 	mov	rdx, [rdi+ASandboxGameMode_vmt_InitGameMode_offset-hiddencube_makesoundevent_offset]
 	mov	[original_initgamemode], rdx
 	lea	rax, [rdx+hiddencube_makesoundevent_offset]
@@ -1357,19 +1356,25 @@ end virtual
 	or	[rbx + .patch_failed - .orig_dll_name], cl
 .skip_chests_patch2:
 end if
-	add	rdi, sophiarune_vmt800_offset - hiddencube_makesoundevent_offset
-	cmp	byte [rbx + .need_sophiarune_marker - .orig_dll_name], 0
-	jz	.skip_sophiarune_marker
+	add	rdi, sophiarune_vmt_isawakenedby_offset - hiddencube_makesoundevent_offset
 	mov	cl, 1
 	mov	rdx, [rdi]
+	mov	[sophiarune_isawakenedby], rdx
+	lea	rax, [rdx+sophiarune_vmt_isawakenedby_offset]
+	sub	rax, rdi
+	cmp	rax, expected_image_size
+	jae	.done_sophiarune_marker
+	cmp	dword [rdx+26h], sophiarune_vmt_isawakenedby_expected
+	jnz	.done_sophiarune_marker
+	mov	rdx, [rdi+sophiarune_vmt800_offset-sophiarune_vmt_isawakenedby_offset]
 	mov	[sophiarune_vmt800], rdx
-	lea	rax, [rdx+sophiarune_vmt800_offset]
+	lea	rax, [rdx+sophiarune_vmt_isawakenedby_offset]
 	sub	rax, rdi
 	cmp	rax, expected_image_size
 	jae	.done_sophiarune_marker
 	cmp	dword [rdx+3Ah], sophiarune_vmt800_expected
 	jnz	.done_sophiarune_marker
-	lea	rax, [rdi+weakobjectptr_get_offset-sophiarune_vmt800_offset]
+	lea	rax, [rdi+weakobjectptr_get_offset-sophiarune_vmt_isawakenedby_offset]
 	cmp	dword [rax+48h], weakobjectptr_get_expected
 	jnz	.done_sophiarune_marker
 	mov	[weakobjectptr_get], rax
@@ -1381,15 +1386,18 @@ end if
 	cmp	dword [rax+0Fh], StaticLoadObject_expected
 	jnz	.done_sophiarune_marker
 	mov	[StaticLoadObject], rax
-	call	make_writable
-	lea	rax, [hook_sophiarune_vmt800]
+	mov	rdx, sophiarune_vmt800_offset-sophiarune_vmt_isawakenedby_offset+8
+	call	make_writable.large
+	lea	rax, [hook_sophiarune_isawakenedby]
 	mov	[rdi], rax
-	call	restore_protection
+	lea	rax, [hook_sophiarune_vmt800]
+	mov	rdx, sophiarune_vmt800_offset-sophiarune_vmt_isawakenedby_offset+8
+	mov	[rdi+rdx-8], rax
+	call	restore_protection.large
 	mov	cl, 0
 .done_sophiarune_marker:
 	or	[rbx + .patch_failed - .orig_dll_name], cl
-.skip_sophiarune_marker:
-	add	rdi, giskraken_init_offset - sophiarune_vmt800_offset
+	add	rdi, giskraken_init_offset - sophiarune_vmt_isawakenedby_offset
 	mov	rax, giskraken_init_expected
 	mov	cl, 1
 	cmp	[rdi], rax
@@ -2975,6 +2983,24 @@ hook_playmusicnote_pitch:
 	ret
 .end:
 
+; Workaround against randomly "broken" textures of static grids.
+; When the game runs client initialization for a dungeon,
+; it calls IsAwakenedBy with this dungeon for all loaded puzzles,
+; and BPI_OnAwakenStateChange for those puzzles that have returned true.
+; Grid blueprints have a bug where BPI_OnAwakenStateChange breaks the textures
+; if called before client initialization,
+; so those grids that are initialized after any grid-related dungeon end up broken.
+hook_sophiarune_isawakenedby:
+	mov	rax, [rcx+6A0h]	; ASophiaRune::PuzzleGrid
+	test	rax, rax
+	jz	.tooearly
+	cmp	byte [rax+6D9h], 0	; UPuzzleGrid::bFinishedClientInit
+	jz	.tooearly
+	jmp	[sophiarune_isawakenedby]
+.tooearly:
+	mov	al, 0
+	ret
+
 hook_sophiarune_vmt800:
 	push	rbx
 .prolog_offs1 = $ - hook_sophiarune_vmt800
@@ -3904,6 +3930,7 @@ extra_grid_icons	rq	3
 weakobjectptr_get	dq	?
 weakobjectptr_assign	dq	?
 StaticLoadObject	dq	?
+sophiarune_isawakenedby dq	?
 sophiarune_vmt800	dq	?
 UGISProgression_GetFromWorld	dq	?
 GetSophiaCharacterFromWorld	dq	?
