@@ -1045,12 +1045,12 @@ end if
 .skip_rings_quest_patch:
 	add	rdi, ADungeon_OnPlayerBeginInteract_offset+1-getcompletionpercentage_offset
 	lea	rcx, [strGameplay]
-	lea	rdx, [strEnteringQuestHidesUI]
-	xor	r8d, r8d
+	lea	rdx, [strEnteringQuestKeepsUI]
+	mov	r8d, 1
 	mov	r9, rbx
 	call	[GetPrivateProfileIntW]
 	test	eax, eax
-	jnz	.skip_unfocus_dungeoninfo_patch
+	jz	.skip_unfocus_dungeoninfo_patch
 	mov	rax, ADungeon_OnPlayerBeginInteract_expected
 	mov	cl, 1
 	cmp	[rdi-13h], rax
@@ -1124,7 +1124,7 @@ end if
 .skip_dungeoninfo_and_musicgrid_sound_patch:
 	add	rdi, ARacingRings_GetSandboxMilestones_offset-ADungeon_OnPlayerBeginInteract_offset2
 	lea	rcx, [strGameplay]
-	lea	rdx, [strGrindGlideRings]
+	lea	rdx, [strFixGlideRingXP]
 	xor	r8d, r8d
 	mov	r9, rbx
 	call	[GetPrivateProfileIntW]
@@ -3872,8 +3872,8 @@ strCheaperMusicForesight	du	'CheaperMusicForesight', 0
 strNotifyPuzzleSpawns	du	'NotifyPuzzleSpawns', 0
 strPreferUnsolvedClusterPuzzles	du	'PreferUnsolvedClusterPuzzles', 0
 strRingsQuestCompletionMode	du	'RingsQuestCompletionMode', 0
-strEnteringQuestHidesUI	du	'EnteringQuestHidesUI', 0
-strGrindGlideRings	du	'GrindGlideRings', 0
+strEnteringQuestKeepsUI	du	'EnteringQuestKeepsUI', 0
+strFixGlideRingXP	du	'FixGlideRingXP', 0
 strSoundVolume	du	'SoundVolume', 0
 strHiddenCube	du	'HiddenCube', 0
 strEnteringEnclave	du	'EnteringEnclave', 0
